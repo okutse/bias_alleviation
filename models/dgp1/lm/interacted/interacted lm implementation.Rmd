@@ -1,0 +1,311 @@
+---
+title: "Linear Regression with Interactions "
+author: "Amos Okutse"
+date: "  `r format(Sys.time(), '%d %B, %Y')` "
+header-includes:
+- \usepackage{color, colortbl}  % for using table colors
+- \definecolor{Gray}{gray}{0.9}  %define the color to be used
+- \usepackage{multirow}
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{fvextra}
+- \usepackage{float}
+- \usepackage{wrapfig}
+- \usepackage{amsmath}
+- \usepackage{float}
+- \usepackage{graphicx}
+- \usepackage{microtype}
+- \usepackage{setspace}
+- \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
+- \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
+#- \onehalfspacing
+fontsize: 10pt
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    keep_md: false
+link-citation: yes
+colorlinks: yes
+linkcolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	cache = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center',
+	fig.pos = 'H',
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr")
+ipak(packages)
+```
+
+
+```{r}
+rm(list = ls())
+## load the individual data files
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_one.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_two.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_three.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_four.RData")
+
+## load the saved list data files
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets1.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets2.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets3.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets4.RData")
+
+```
+
+## INTERACTED LINEAR REGRESSION MODEL
+
+- The linear model fitted in this context has all two-way interactions between the treatment variable and the baseline covariates and is supposed to be misspecified.
+
+### PART A: FULL DATA
+
+```{r}
+## create the function to return the desired estimates from the model
+lm_interact_one <- function(df = NULL){
+  # fit random forest model for all individuals
+  lm_all <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + x1 + x2 + x3 + x4 + A*x1 + A*x2 + A*x3 + A*x4, data = df)
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_all, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_all, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted"=ATE_adjusted, "bias_adjusted"=bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r cache=TRUE, include=FALSE}
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl=makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+# get the results under each data set
+  onea = parLapply(cl, dsets1, lm_interact_one) # when n = 500 and sd = 1
+  oneb = parLapply(cl, dsets2, lm_interact_one) #45
+  onec = parLapply(cl, dsets3, lm_interact_one) #1
+  oned = parLapply(cl, dsets4, lm_interact_one) #45
+stopCluster(cl)
+```
+
+```{r}
+# combine the results into a data frame
+  onea <- onea %>% map_dfr(data.frame) # n = 500, sd = 1
+  oneb <- oneb %>% map_dfr(data.frame) # n = 500, sd = 45
+  onec <- onec %>% map_dfr(data.frame) # n = 2000, sd = 1
+  oned <- oned %>% map_dfr(data.frame) # n = 2000, sd = 45
+```
+
+
+### PART B: OBSERVED DATA
+
+- Analysis restricted to the observed data alone, that is, where $R=1$ predictions are then made for only individuals with observed outcomes.
+
+```{r}
+## create the function to return the desired estimates from the linear model with analysis restricted to observed
+lm_interact_two <- function(df = NULL){
+## fit random forest model for all individuals with R=1
+  df=dplyr::filter(df, R==1)
+  lm_two <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + x1 + x2 + x3 + x4 + A*x1 + A*x2 + A*x3 + A*x4, data = df)
+## set A=0 and generate predictions for those with R=1
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_two, df_A0)
+## set A=1 and generate predictions for those with R=1
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_two, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred)-mean(pred_A0$.pred)
+## compute the biases
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted"=ATE_adjusted, "bias_adjusted"=bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r cache=TRUE, include=FALSE}
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl=makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+
+# get the average computation time
+  twoa = parLapply(cl, dsets1, lm_interact_two) # n = 500, sd = 1
+  twob = parLapply(cl, dsets2, lm_interact_two) # n = 500, sd = 45
+  twoc = parLapply(cl, dsets3, lm_interact_two) # n = 2000, sd = 1
+  twod = parLapply(cl, dsets4, lm_interact_two) # n = 2000, sd = 45
+stopCluster(cl)
+```
+
+```{r}
+# combine the results into a data frame
+  twoa <- twoa %>% map_dfr(data.frame) #n = 500, sd = 1
+  twob <- twob %>% map_dfr(data.frame) # n = 500, sd = 45
+  twoc <- twoc %>% map_dfr(data.frame) # n = 2000, sd = 1
+  twod <- twod %>% map_dfr(data.frame) # n = 2000, sd = 45
+```
+
+
+
+### PART C: MODIFIED AS IN PART B WITH PREDICTIONS FOR EVERYONE
+
+```{r}
+## create the function to return the desired estimates from the linear model fitted on those with R==1 and predict for everyone
+lm_interact_three <- function(df = NULL){
+  
+  # fit random forest model for all individuals with R=1
+  lm_three <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + x1 + x2 + x3 + x4 + A*x1 + A*x2 + A*x3 + A*x4, data = dplyr::filter(df, R == 1))
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_three, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_three, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred) - mean(pred_A0$.pred)
+## compute the biases
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r cache=TRUE, include=FALSE}
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl=makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+
+# get the average computation time
+  threea = parLapply(cl, dsets1, lm_interact_three)
+  threeb = parLapply(cl, dsets2, lm_interact_three)
+  threec = parLapply(cl, dsets3, lm_interact_three)
+  threed = parLapply(cl, dsets4, lm_interact_three)
+stopCluster(cl)
+```
+
+```{r}
+# combine the results into data frames
+  threea<- threea %>% map_dfr(data.frame)
+  threeb<- threeb %>% map_dfr(data.frame)
+  threec<- threec %>% map_dfr(data.frame)
+  threed<- threed %>% map_dfr(data.frame)
+```
+
+## Summary of the results from each case
+
+```{r}
+
+## Extract analysis results from each data file
+##------------------------------------------------------------------------------
+## case 1 [n = 500, sd = 1]
+##------------------------------------------------------------------------------
+options(scipen = 999)
+## full
+full <- c(n = nrow(df_one), ate = mean(onea$ATE_adjusted), sd = sd(onea$ATE_adjusted), bias = mean(onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(df_one, R == 1)), ate = mean(twoa$ATE_adjusted), sd = sd(twoa$ATE_adjusted), bias = mean(twoa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(df_one, R == 1)), ate = mean(threea$ATE_adjusted), sd = sd(threea$ATE_adjusted), bias = mean(threea$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, sd = 45]
+##------------------------------------------------------------------------------
+full2 <- c(n = nrow(df_two), ate = mean(oneb$ATE_adjusted), sd = sd(oneb$ATE_adjusted), bias = mean(oneb$bias_adjusted))
+full2
+## observed
+obs2 <- c(n = nrow(subset(df_two, R == 1)), ate = mean(twob$ATE_adjusted), sd = sd(twob$ATE_adjusted), bias = mean(twob$bias_adjusted))
+obs2
+## observed modified
+obs_m2 <- c(n = nrow(subset(df_two, R == 1)), ate = mean(threeb$ATE_adjusted), sd = sd(threeb$ATE_adjusted), bias = mean(threeb$bias_adjusted))
+obs_m2
+
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, sd = 1]
+##------------------------------------------------------------------------------
+full3 <- c(n = nrow(df_three), ate = mean(onec$ATE_adjusted), sd = sd(onec$ATE_adjusted), bias = mean(onec$bias_adjusted))
+full3
+## observed
+obs3 <- c(n = nrow(subset(df_three, R == 1)), ate = mean(twoc$ATE_adjusted), sd = sd(twoc$ATE_adjusted), bias = mean(twoc$bias_adjusted))
+obs3
+## observed modified
+obs_m3 <- c(n = nrow(subset(df_three, R == 1)), ate = mean(threec$ATE_adjusted), sd = sd(threec$ATE_adjusted), bias = mean(threec$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, sd = 45]
+##------------------------------------------------------------------------------
+full4 <- c(n = nrow(df_four), ate = mean(oned$ATE_adjusted), sd = sd(oned$ATE_adjusted), bias = mean(oned$bias_adjusted))
+full4
+## observed
+obs4 <- c(n = nrow(subset(df_four, R == 1)), ate = mean(twod$ATE_adjusted), sd = sd(twod$ATE_adjusted), bias = mean(twod$bias_adjusted))
+obs4
+## observed modified
+obs_m4 <- c(n = nrow(subset(df_four, R == 1)), ate = mean(threed$ATE_adjusted), sd = sd(threed$ATE_adjusted), bias = mean(threed$bias_adjusted))
+obs_m4
+```
+
+
+## Table of Interacted Linear Regression Results
+
+```{r interacted-linear}
+interacted_linear = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs2, "n = 500, SD = 45" = obs_m2, "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs3, "n = 2000, SD = 1" = obs_m3, "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs4, "n = 2000, SD = 45" = obs_m4), .id = "Data generating values") 
+kable(interacted_linear, format = "latex", caption = "Interacted linear regression model results averaged across n = 1000 data sets under full, observed, and observed modified analyses")
+
+
+## save the results file as .csv
+write.csv(interacted_linear, file = "G:\\Shared drives\\amos\\ThesisResults\\[3]_interacted\\interacted_linear_results.csv", row.names = FALSE)
+```
+
+
+
+
