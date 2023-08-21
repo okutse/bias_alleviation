@@ -1,0 +1,315 @@
+---
+title: "Random Forest Regression"
+subtitle: "Results based on data-specific hyper-parameter tuning"
+author: "Amos Okutse"
+date: "  `r format(Sys.time(), '%d %B, %Y')` "
+header-includes:
+- \usepackage{color, colortbl}  % for using table colors
+- \definecolor{Gray}{gray}{0.9}  %define the color to be used
+- \usepackage{multirow}
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{fvextra}
+- \usepackage{float}
+- \usepackage{wrapfig}
+- \usepackage{amsmath}
+- \usepackage{float}
+- \usepackage{graphicx}
+- \usepackage{microtype}
+- \usepackage{setspace}
+- \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
+- \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
+#- \onehalfspacing
+fontsize: 10pt
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    keep_md: false
+link-citation: yes
+colorlinks: yes
+linkcolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	cache = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center',
+	fig.pos = 'H',
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr")
+ipak(packages)
+```
+
+
+```{r}
+rm(list = ls())
+## load the saved single data files
+## load the individual data files
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_one.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_two.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_three.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_four.RData")
+
+## load the saved list data files
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets1.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets2.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets3.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets4.RData")
+
+
+```
+
+### PART A: FULL DATA
+
+```{r}
+
+## create the function to return the desired estimates from the model
+rf_model_one <- function(df = NULL, mtry = NULL, min_n = NULL){
+  # fit random forest model for all individuals
+  rf_all <- rand_forest(trees = 1000, mtry = mtry, min_n = min_n) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger") %>% 
+  fit(formula = y ~ A + x1 + x2 + x3 + x4, data = df)
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(rf_all, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(rf_all, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r cache=TRUE, include=FALSE}
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl=makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+## compute the estimates of the average treatment effect for each data set
+  onea = parLapply(cl, dsets1, rf_model_one, mtry = 5, min_n = 4)
+  oneb = parLapply(cl, dsets2, rf_model_one, mtry = 4, min_n = 23)
+  onec = parLapply(cl, dsets3, rf_model_one, mtry = 5, min_n = 4)
+  oned = parLapply(cl, dsets4, rf_model_one, mtry = 2, min_n = 35)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  rf_onea <- onea %>% map_dfr(data.frame)
+  rf_oneb <- oneb %>% map_dfr(data.frame)
+  rf_onec <- onec %>% map_dfr(data.frame)
+  rf_oned <- oned %>% map_dfr(data.frame)
+```
+
+
+### PART B: OBSERVED DATA ONLY
+
+- Analysis restricted on the observed data alone, that is, where $R=1$. Predictions are then made to only those individuals with observed outcomes.  
+
+```{r}
+## create the function to return the desired estimates from the model
+rf_model_two <- function(df = NULL, mtry = NULL, min_n = NULL){
+## filter the data to have only individuals with R = 1
+  df = dplyr::filter(df, R == 1)
+  # fit random forest model for all individuals with R=1
+  rf_two <- rand_forest(trees = 1000, mtry = mtry, min_n = min_n) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger") %>% 
+  fit(formula = y ~ A + x1 + x2 + x3 + x4, data = df)
+## set A=0 and generate predictions for those with R=1
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(rf_two, df_A0)
+## set A=1 and generate predictions for those with R=1
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(rf_two, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred)-mean(pred_A0$.pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+ 
+ 
+
+```{r cache=TRUE, include=FALSE}
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl=makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+
+# get the average estimated effects across 1000 simulated data sets
+  twoa = parLapply(cl, dsets1, rf_model_two, mtry = 5, min_n = 4)
+  twob = parLapply(cl, dsets2, rf_model_two, mtry = 5, min_n = 4)
+  twoc = parLapply(cl, dsets3, rf_model_two, mtry = 5, min_n = 4)
+  twod = parLapply(cl, dsets4, rf_model_two, mtry = 3, min_n = 38)
+stopCluster(cl)
+```
+
+```{r}
+# combine the results into a data frame
+  rf_twoa <- twoa %>% map_dfr(data.frame)
+  rf_twob <- twob %>% map_dfr(data.frame)
+  rf_twoc <- twoc %>% map_dfr(data.frame)
+  rf_twod <- twod %>% map_dfr(data.frame)
+```
+
+
+
+
+### PART C: MODIFIED AS IN PART B WITH PREDICTIONS FOR EVERYONE
+
+```{r}
+## create the function to return the desired estimates from the model
+rf_model_three <- function(df = NULL, mtry = NULL, min_n = NULL){
+  # fit random forest model for all individuals with R=1
+  rf_three <- rand_forest(trees = 1000, mtry = mtry, min_n = min_n) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger") %>% 
+  fit(formula = y ~ A + x1 + x2 + x3 + x4, data = dplyr::filter(df, R == 1))
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(rf_three, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(rf_three, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred) - mean(pred_A0$.pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r cache=TRUE, include=FALSE}
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+
+## compute the estimated results across 1000 data frames
+  threea = parLapply(cl, dsets1, rf_model_three, mtry = 5, min_n = 4)
+  threeb = parLapply(cl, dsets2, rf_model_three, mtry = 5, min_n = 4)
+  threec = parLapply(cl, dsets3, rf_model_three, mtry = 5, min_n = 4)
+  threed = parLapply(cl, dsets4, rf_model_three, mtry = 3, min_n = 38)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  rf_threea <- threea %>% map_dfr(data.frame)
+  rf_threeb <- threeb %>% map_dfr(data.frame)
+  rf_threec <- threec %>% map_dfr(data.frame)
+  rf_threed <- threed %>% map_dfr(data.frame)
+```
+
+
+
+```{r}
+##------------------------------------------------------------------------------
+## case 1 [n = 500, sd = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(df_one), ate = mean(rf_onea$ATE_adjusted), sd = sd(rf_onea$ATE_adjusted), bias = mean(rf_onea$bias_adjusted), sd_bias = sd(rf_onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(df_one, R == 1)), ate = mean(rf_twoa$ATE_adjusted), sd = sd(rf_twoa$ATE_adjusted), bias = mean(rf_twoa$bias_adjusted), sd_bias = sd(rf_twoa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(df_one, R == 1)), ate = mean(rf_threea$ATE_adjusted), sd = sd(rf_threea$ATE_adjusted), bias = mean(rf_threea$bias_adjusted), sd_bias = sd(rf_threea$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, sd = 45]
+##------------------------------------------------------------------------------
+full2 <- c(n = nrow(df_two), ate = mean(rf_oneb$ATE_adjusted), sd = sd(rf_oneb$ATE_adjusted), bias = mean(rf_oneb$bias_adjusted), sd_bias = sd(rf_oneb$bias_adjusted))
+full2
+## observed
+obs2 <- c(n = nrow(subset(df_two, R == 1)), ate = mean(rf_twob$ATE_adjusted), sd = sd(rf_twob$ATE_adjusted), bias = mean(rf_twob$bias_adjusted), sd_bias = sd(rf_twob$bias_adjusted))
+obs2
+## observed modified
+obs_m2 <- c(n = nrow(subset(df_two, R == 1)), ate = mean(rf_threeb$ATE_adjusted), sd = sd(rf_threeb$ATE_adjusted), bias = mean(rf_threeb$bias_adjusted), sd_bias = sd(rf_threeb$bias_adjusted))
+obs_m2
+
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, sd = 1]
+##------------------------------------------------------------------------------
+full3 <- c(n = nrow(df_three), ate = mean(rf_onec$ATE_adjusted), sd = sd(rf_onec$ATE_adjusted), bias = mean(rf_onec$bias_adjusted), sd_bias = sd(rf_onec$bias_adjusted))
+full3
+## observed
+obs3 <- c(n = nrow(subset(df_three, R == 1)), ate = mean(rf_twoc$ATE_adjusted), sd = sd(rf_twoc$ATE_adjusted), bias = mean(rf_twoc$bias_adjusted), sd_bias = sd(rf_twoc$bias_adjusted))
+obs3
+## observed modified
+obs_m3 <- c(n = nrow(subset(df_three, R == 1)), ate = mean(rf_threec$ATE_adjusted), sd = sd(rf_threec$ATE_adjusted), bias = mean(rf_threec$bias_adjusted), sd_bias = sd(rf_threec$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, sd = 45]
+##------------------------------------------------------------------------------
+full4 <- c(n = nrow(df_four), ate = mean(rf_oned$ATE_adjusted), sd = sd(rf_oned$ATE_adjusted), bias = mean(rf_oned$bias_adjusted), sd_bias = sd(rf_oned$bias_adjusted))
+full4
+## observed
+obs4 <- c(n = nrow(subset(df_four, R == 1)), ate = mean(rf_twod$ATE_adjusted), sd = sd(rf_twod$ATE_adjusted), bias = mean(rf_twod$bias_adjusted), sd_bias = sd(rf_twod$bias_adjusted))
+obs4
+## observed modified
+obs_m4 <- c(n = nrow(subset(df_four, R == 1)), ate = mean(rf_threed$ATE_adjusted), sd = sd(rf_threed$ATE_adjusted), bias = mean(rf_threed$bias_adjusted), sd_bias = sd(rf_threed$bias_adjusted))
+obs_m4
+
+
+
+```
+
+## TABLE OF RANDOM FOREST RESULTS
+
+```{r random-forest}
+random_forest2 <- bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m,
+                                 "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs2, "n = 500, SD = 45" = obs_m2, "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs3, "n = 2000, SD = 1" = obs_m3, "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs4, "n = 2000, SD = 45" = obs_m4), .id = "Data generating values") 
+kable(random_forest2, format = "latex", caption = "Random forest results averaged across n = 1000 datasets under full, observed, and observed modified analysis")
+
+
+## the order of the rows starts with n = 500 
+write.csv(random_forest2, file = "G:\\Shared drives\\amos\\ThesisResults\\[4]_random_forest[2]\\final_rf\\rforest_results_two.csv", row.names = FALSE)
+```
+
