@@ -11,7 +11,7 @@ ipak(packages)
 
 ##------------------------------------------------------------------------------
 ## set the working directory to save the data files
-setwd("C:\\Users\\aokutse\\OneDrive - Brown University\\ThesisResults\\data")
+## setwd("C:\\Users\\aokutse\\OneDrive - Brown University\\ThesisResults\\data")
 
 
 ##------------------------------------------------------------------------------
