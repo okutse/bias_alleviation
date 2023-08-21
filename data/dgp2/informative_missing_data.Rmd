@@ -19,7 +19,6 @@ header-includes:
 - \usepackage{setspace}
 - \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
 - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
-#- \onehalfspacing
 fontsize: 10pt
 output:
   bookdown::pdf_document2:
@@ -27,7 +26,6 @@ output:
     toc: true
     toc_depth: 4
     number_sections: true
-    #keep_md: true
 link-citation: yes
 colorlinks: yes
 linkcolor: blue
@@ -63,7 +61,7 @@ ipak(packages)
 
 - This data generation mechanism examines a more informative missing data mechanism and specifically, the role of covariate adjustment when the missing data is not only dependent on the adjustment covariates in a misspecified model but also on the treatment variable, and the effect modification of the treatment effect by a single adjustment covariate. 
 
-- We explore the effect of the omission of the treatment effect modifying covariate on the subsequent treatment effect estimates as well as missing data induced bias when the adjustment covariates are fairly to highly prognostic of the outcome under correct and incorrect model misspecifications. 
+- We explore the effect of the omission of the treatment effect modifying covariate on the subsequent treatment effect estimates as well as missing data-induced bias when the adjustment covariates are fair to highly prognostic of the outcome under correct and incorrect model misspecifications. 
 
 - The outcome data generation mechanism is specified as $y = 210 + 50*A + \theta_1 * A*Z_1 + 27.4*Z_1 + 13.7*Z_2 + 13.7*Z_3 + 13.7*Z_4 + e$ whereas the missing data model is $R = \textrm{expit}(-Z_1 + \eta_0*A + \eta_1*A*Z_1 +0.5*Z_2 - 0.25*Z_3 - 0.1*Z_4)$. We generate the actual adjustment covariates under incorrect model specification as $x_1 = exp(Z_1/2),\: x_2 = Z_2/(1+exp(Z_1))+10, \: x_3 = (Z_1Z_3/25 + 0.6)^3,\: x_4 = (Z_2 + Z_4 + 20)^2$ assuming that these are the variables the analyst has access to.
 
@@ -79,15 +77,15 @@ ipak(packages)
 
 (1) [Model 1] Including all the Z's in the adjustment model should not result in substantial biases (if any). 
 
-(2) [Model 2] Dropping the $Z$ in the adjustment model should result into some bias (higher bias compared to Model 1 given that adjustment does not consider treatment effect modification by the cvariate $Z_1$)
+(2) [Model 2] Dropping the $Z$ in the adjustment model should result in some bias (higher bias compared to Model 1 given that adjustment does not consider treatment effect modification by the cvariate $Z_1$)
 
 - **Simulation setting 3** has the conditions $\theta_1 = 0, \: \eta_0 = 1, \: \eta_1 = -1$ alluding to the dependence of the missing data mechanism on the treatment, $A$ and the potential effect modification by variable $Z_1$.
 
-(1) [Model 1] should expect to see limited bias if any since adjustment is for true outcome generating variables.
+(1) [Model 1] should expect to see limited bias if any since the adjustment is for true outcome-generating variables.
 
 (2) [Model 2] should expect to see bias higher when residual sd is high since we do not consider the effect modification by $Z_1$ in the adjustment when we drop this variable from the adjustment model. 
 
-- When we adjust for a variable on which the missing data mechanism depends on, we should expect to see some gains in precision and reductions in bias. Gains should be higher when the proportion of variance explained by the adjustment covariates is higher.
+- When we adjust for a variable on which the missing data mechanism depends, we should expect to see some gains in precision and reductions in bias. Gains should be higher when the proportion of variance explained by the adjustment covariates is higher.
 
 ## Data generation mechanisms
 
@@ -113,7 +111,7 @@ dgp2 <- function(n, ss, theta, eta0, eta1) {
   for (i in 1:n){if (i <= n/2){ A[i] = 1} else {if (i > n/2){A[i] = 0}}}
   # create the dataframe with the true covariates
   mat <- data.frame(
-    "z1" <- rnorm(n = n, mean = 0, sd = 1), 
+    z1 <- rnorm(n = n, mean = 0, sd = 1), 
     z2 <- rnorm(n = n, mean = 0, sd = 1),
     z3 <- rnorm(n = n, mean = 0, sd = 1), 
     z4 <- rnorm(n = n, mean = 0, sd = 1))
@@ -130,7 +128,6 @@ dgp2 <- function(n, ss, theta, eta0, eta1) {
   # save variables as a data frame
   df <-data.frame(y, A, x1, x2, x3, x4, R, e, mat)
 } 
-
 ```
 
 ### Setting One Datasets
@@ -141,7 +138,7 @@ Each dataset here will be modeled under two scenarios where there's adjustment f
 
 ```{r eval=FALSE, echo=TRUE}
 set.seed(123)
-# the organization of the files for each simulation setting hold as below
+# The organization of the files for each simulation setting hold as below
 #sd = 1; n = 500
 s_onea <- dgp2(n = 500, ss = 1, theta = 0, eta0 = 0, eta1 = 0)
 # sd = 45; n = 500
@@ -159,7 +156,7 @@ s1b = foreach(1:1000) %dopar% dgp2(n = 500, ss = 45, theta = 0, eta0 = 0, eta1 =
 s1c = foreach(1:1000) %dopar% dgp2(n = 2000, ss = 1, theta = 0, eta0 = 0, eta1 = 0)
 s1d = foreach(1:1000) %dopar% dgp2(n = 2000, ss = 45, theta = 0, eta0 = 0, eta1 = 0)
 
-## save all as one for simulation setting one data (one.RData)
+## Save all data sets as one for analyses under simulation setting one (one.RData)
 # save("s_onea", "s_oneb", "s_onec", "s_oned", "s1a", "s1b", "s1c", "s1d", file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/one.RData")
 ```
 
@@ -179,7 +176,7 @@ s_twoc <- dgp2(n = 2000, ss = 1, theta = 0, eta0 = 1, eta1 = 0)
 s_twod <- dgp2(n = 2000, ss = 45, theta = 0, eta0 = 1, eta1 = 0)
 
 
-## simulate 1000 data sets and save as a list for further analysis
+## Simulate 1000 data sets and save them as a list for further analysis
 cores <- parallel::detectCores()
 doParallel::registerDoParallel(cores - 1)
 s2a = foreach(1:1000) %dopar% dgp2(n = 500, ss = 1, theta = 0, eta0 = 1, eta1 = 0)
@@ -187,7 +184,7 @@ s2b = foreach(1:1000) %dopar% dgp2(n = 500, ss = 45, theta = 0, eta0 = 1, eta1 =
 s2c = foreach(1:1000) %dopar% dgp2(n = 2000, ss = 1, theta = 0, eta0 = 1, eta1 = 0)
 s2d = foreach(1:1000) %dopar% dgp2(n = 2000, ss = 45, theta = 0, eta0 = 1, eta1 = 0)
 
-## save all as one for simulation setting one data (two.RData)
+## save all data sets as one for analyses under simulation setting two data (two.RData)
 # save("s_twoa", "s_twob", "s_twoc", "s_twod", "s2a", "s2b", "s2c", "s2d", file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/two.RData")
 ```
 
@@ -208,7 +205,7 @@ s_threec <- dgp2(n = 2000, ss = 1, theta = 0, eta0 = 1, eta1 = 1)
 s_threed <- dgp2(n = 2000, ss = 45, theta = 0, eta0 = 1, eta1 = 1)
 
 
-## simulate 1000 data sets and save as a list for further analysis
+## Simulate 1000 data sets and save them as a list for further analysis
 cores <- parallel::detectCores()
 doParallel::registerDoParallel(cores - 1)
 s3a = foreach(1:1000) %dopar% dgp2(n = 500, ss = 1, theta = 0, eta0 = 1, eta1 = 1)
@@ -216,7 +213,7 @@ s3b = foreach(1:1000) %dopar% dgp2(n = 500, ss = 45, theta = 0, eta0 = 1, eta1 =
 s3c = foreach(1:1000) %dopar% dgp2(n = 2000, ss = 1, theta = 0, eta0 = 1, eta1 = 1)
 s3d = foreach(1:1000) %dopar% dgp2(n = 2000, ss = 45, theta = 0, eta0 = 1, eta1 = 1)
 
-## save all as one for simulation setting one data (one.RData)
+## Save all data sets as one for analyses corresponding to simulation setting three data (one.RData)
  save("s_threea", "s_threeb", "s_threec", "s_threed", "s3a", "s3b", "s3c", "s3d", file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/three.RData")
 ```
 
