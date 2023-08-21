@@ -1,0 +1,378 @@
+---
+title: "eXtreme Gradient Boosted Tree Ensemble (xGBoost) [2]"
+subtitle: "Estimating the ATE using data-specific tuned XGBoost model hyperparamters including min_n, tree_depth, learn_rate, and loss_reduction"
+author: "Amos Okutse"
+date: "  `r format(Sys.time(), '%d %B, %Y')` "
+header-includes:
+- \usepackage{color, colortbl}  % for using table colors
+- \definecolor{Gray}{gray}{0.9}  %define the color to be used
+- \usepackage{multirow}
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{fvextra}
+- \usepackage{float}
+- \usepackage{wrapfig}
+- \usepackage{amsmath}
+- \usepackage{float}
+- \usepackage{graphicx}
+- \usepackage{microtype}
+- \usepackage{setspace}
+- \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
+- \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
+#- \onehalfspacing
+fontsize: 10pt
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    #keep_md: true
+link-citation: yes
+colorlinks: yes
+linkcolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	cache = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center',
+	fig.pos = 'H',
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr")
+ipak(packages)
+```
+
+### LOAD DATA
+
+```{r}
+rm(list = ls())
+## load the saved single data files
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_one.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_two.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_three.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_four.RData")
+
+## load the saved list data files
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets1.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets2.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets3.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets4.RData")
+```
+
+### PART A: FULL DATA
+
+
+```{r}
+xgboost_one <- function(df = NULL, min_n = NULL, tree_depth = NULL, learn_rate = NULL, loss_reduction = NULL){ 
+  
+## fit the model for all individuals with predictions for everyone
+  xg_all <- parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = min_n, ## then # of data points at a node before being split further
+    tree_depth = tree_depth,  ## max depth of a tree
+    learn_rate = learn_rate,  ## shrinkage parameter; step size
+    loss_reduction = loss_reduction  ## ctrls model complexity
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror") %>% 
+    fit(formula = y ~ A + x1 + x2 + x3 + x4, data = df)
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(xg_all, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(xg_all, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)}
+```
+
+```{r cache=TRUE, include=FALSE}
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl=makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+## compute the estimates of the average treatment effect for each list of data sets
+  onea = parLapply(cl, dsets1, xgboost_one, min_n = 8, tree_depth = 9, learn_rate = 0.0205, loss_reduction = 1.2e-05)
+  
+  oneb = parLapply(cl, dsets2, xgboost_one, min_n = 23, tree_depth = 1, learn_rate = 0.0369, loss_reduction = 2.9e-06)
+  
+  onec = parLapply(cl, dsets3, xgboost_one, min_n = 22, tree_depth = 9, learn_rate = 0.0454, loss_reduction = 0.0179)
+  
+  oned = parLapply(cl, dsets4, xgboost_one, min_n = 33, tree_depth = 3, learn_rate = 0.0198, loss_reduction = 0.0499)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  xg_onea <- onea %>% map_dfr(data.frame)  ## n = 500, SD = 1
+  xg_oneb <- oneb %>% map_dfr(data.frame)  ## n = 500, SD = 45
+  xg_onec <- onec %>% map_dfr(data.frame)  ## n = 2000, SD = 1
+  xg_oned <- oned %>% map_dfr(data.frame)  ## n = 2000, SD = 45
+```
+
+
+
+### PART B: OBSERVED DATA ONLY
+
+- Analysis restricted on the observed data alone, that is, where $R=1$. Predictions are then made to only those individuals with observed outcomes.  
+
+```{r}
+## create the function to return the desired estimates from the model
+xgboost_two <- function(df = NULL, min_n = NULL, tree_depth = NULL, learn_rate = NULL, loss_reduction = NULL){ 
+  
+## filter the data to have only individuals with R = 1
+  df = dplyr::filter(df, R == 1)
+## fit the model for all individuals with predictions for everyone
+  xg_two <- parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = min_n, 
+    tree_depth = tree_depth,  
+    learn_rate = learn_rate,  
+    loss_reduction = loss_reduction
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror") %>% 
+    fit(formula = y ~ A + x1 + x2 + x3 + x4, data = df)
+
+## set A=0 and generate predictions for those with R=1
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(xg_two, df_A0)
+## set A=1 and generate predictions for those with R=1
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(xg_two, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred)-mean(pred_A0$.pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+ 
+ 
+
+```{r cache=TRUE, include=FALSE}
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl=makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+## compute the estimates of the average treatment effect for each list of data sets
+  twoa = parLapply(cl, dsets1, xgboost_two, min_n = 8, tree_depth = 8, learn_rate = 0.0429, loss_reduction = 2.3734)
+  
+  twob = parLapply(cl, dsets2, xgboost_two, min_n = 8, tree_depth = 8, learn_rate = 0.0429, loss_reduction = 2.373)
+  
+  twoc = parLapply(cl, dsets3, xgboost_two, min_n = 8, tree_depth = 8, learn_rate = 0.0428, loss_reduction = 2.3734)
+  
+  twod = parLapply(cl, dsets4, xgboost_two, min_n = 23, tree_depth = 1, learn_rate = 0.0369, loss_reduction = 2.9e-06)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  xg_twoa <- twoa %>% map_dfr(data.frame)  ## n = 500, SD = 1
+  xg_twob <- twob %>% map_dfr(data.frame)  ## n = 500, SD = 45
+  xg_twoc <- twoc %>% map_dfr(data.frame)  ## n = 2000, SD = 1
+  xg_twod <- twod %>% map_dfr(data.frame)  ## n = 2000, SD = 45
+```
+
+### PART C: MODIFIED AS IN PART B WITH PREDICTIONS FOR EVERYONE
+
+```{r}
+## create the function to return the desired estimates from the model
+xgboost_three <- function(df = NULL, min_n = NULL, tree_depth = NULL, learn_rate = NULL, loss_reduction = NULL){ 
+## fit the model for all individuals with predictions for everyone
+  xg_three <- parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = min_n, 
+    tree_depth = tree_depth,  
+    learn_rate = learn_rate,  
+    loss_reduction = loss_reduction) %>%
+    set_engine("xgboost", objective = "reg:squarederror") %>% 
+    fit(formula = y ~ A + x1 + x2 + x3 + x4, data = base::subset(df, R == 1))
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(xg_three, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(xg_three, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred) - mean(pred_A0$.pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+
+
+
+
+
+```{r cache=TRUE, include=FALSE}
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl=makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+## compute the estimates of the average treatment effect for each list of data sets
+  threea = parLapply(cl, dsets1, xgboost_three, min_n = 8, tree_depth = 8, learn_rate = 0.0429, loss_reduction = 2.3734)
+  
+  threeb = parLapply(cl, dsets2, xgboost_three, min_n = 8, tree_depth = 8, learn_rate = 0.0429, loss_reduction = 2.3734)
+  
+  threec = parLapply(cl, dsets3, xgboost_three, min_n = 8, tree_depth = 8, learn_rate = 0.0429, loss_reduction = 2.3734)
+  
+  threed = parLapply(cl, dsets4, xgboost_three, min_n = 23, tree_depth = 1, learn_rate = 0.0369, loss_reduction = 2.9e-06)
+stopCluster(cl)
+```
+
+```{r}
+# combine the results into a data frame
+  xg_threea <- threea %>% map_dfr(data.frame)  ## n = 500, SD = 1
+  xg_threeb <- threeb %>% map_dfr(data.frame)  ## n = 500, SD = 45
+  xg_threec <- threec %>% map_dfr(data.frame)  ## n = 2000, SD = 1
+  xg_threed <- threed %>% map_dfr(data.frame)  ## n = 2000, SD = 45
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## EXTRACT FINAL RESULTS AND SAVE
+
+
+```{r}
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(df_one), ate = mean(xg_onea$ATE_adjusted), sd = sd(xg_onea$ATE_adjusted), bias = mean(xg_onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(df_one, R == 1)), ate = mean(xg_twoa$ATE_adjusted), sd = sd(xg_twoa$ATE_adjusted), bias = mean(xg_twoa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(df_one, R == 1)), ate = mean(xg_threea$ATE_adjusted), sd = sd(xg_threea$ATE_adjusted), bias = mean(xg_threea$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, sd = 45]
+##------------------------------------------------------------------------------
+full2 <- c(n = nrow(df_two), ate = mean(xg_oneb$ATE_adjusted), sd = sd(xg_oneb$ATE_adjusted), bias = mean(xg_oneb$bias_adjusted))
+full2
+## observed
+obs2 <- c(n = nrow(subset(df_two, R == 1)), ate = mean(xg_twob$ATE_adjusted), sd = sd(xg_twob$ATE_adjusted), bias = mean(xg_twob$bias_adjusted))
+obs2
+## observed modified
+obs_m2 <- c(n = nrow(subset(df_two, R == 1)), ate = mean(xg_threeb$ATE_adjusted), sd = sd(xg_threeb$ATE_adjusted), bias = mean(xg_threeb$bias_adjusted))
+obs_m2
+
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, sd = 1]
+##------------------------------------------------------------------------------
+full3 <- c(n = nrow(df_three), ate = mean(xg_onec$ATE_adjusted), sd = sd(xg_onec$ATE_adjusted), bias = mean(xg_onec$bias_adjusted))
+full3
+## observed
+obs3 <- c(n = nrow(subset(df_three, R == 1)), ate = mean(xg_twoc$ATE_adjusted), sd = sd(xg_twoc$ATE_adjusted), bias = mean(xg_twoc$bias_adjusted))
+obs3
+## observed modified
+obs_m3 <- c(n = nrow(subset(df_three, R == 1)), ate = mean(xg_threec$ATE_adjusted), sd = sd(xg_threec$ATE_adjusted), bias = mean(xg_threec$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, sd = 45]
+##------------------------------------------------------------------------------
+full4 <- c(n = nrow(df_four), ate = mean(xg_oned$ATE_adjusted), sd = sd(xg_oned$ATE_adjusted), bias = mean(xg_oned$bias_adjusted))
+full4
+## observed
+obs4 <- c(n = nrow(subset(df_four, R == 1)), ate = mean(xg_twod$ATE_adjusted), sd = sd(xg_twod$ATE_adjusted), bias = mean(xg_twod$bias_adjusted))
+obs4
+## observed modified
+obs_m4 <- c(n = nrow(subset(df_four, R == 1)), ate = mean(xg_threed$ATE_adjusted), sd = sd(xg_threed$ATE_adjusted), bias = mean(xg_threed$bias_adjusted))
+obs_m4
+```
+
+
+
+```{r xgboost}
+xgfull3 = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs2, "n = 500, SD = 45" = obs_m2, "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs3, "n = 2000, SD = 1" = obs_m3, "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs4, "n = 2000, SD = 45" = obs_m4), .id = "Data generating values") 
+kable(xgfull3, format = "latex", caption = "eXtreme Gradient Boosted Tree (XGBOOST) model results averaged across n = 1000 datasets under full, observed, and observed modified analysis")
+
+
+## the order of the rows starts with n = 500 
+write.csv(xgfull3, file = "G:\\Shared drives\\amos\\ThesisResults\\[5]_gbm\\xgboosted_tree_model\\xgboost_three_results.csv", row.names = FALSE)
+```

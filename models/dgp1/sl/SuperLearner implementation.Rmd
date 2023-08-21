@@ -1,0 +1,580 @@
+---
+title: "Super Learner Model"
+subtitle: ""
+author: "Amos Okutse"
+date: "  `r format(Sys.time(), '%d %B, %Y')` "
+header-includes:
+- \usepackage{color, colortbl}  % for using table colors
+- \definecolor{Gray}{gray}{0.9}  %define the color to be used
+- \usepackage{multirow}
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{fvextra}
+- \usepackage{float}
+- \usepackage{wrapfig}
+- \usepackage{amsmath}
+- \usepackage{float}
+- \usepackage{graphicx}
+- \usepackage{microtype}
+- \usepackage{setspace}
+- \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
+- \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
+#- \onehalfspacing
+fontsize: 10pt
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    keep_md: false
+link-citation: yes
+colorlinks: yes
+linkcolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	cache = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center',
+	fig.pos = 'H',
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr", "caret", "SuperLearner", "bartMachine", "xgboost", "rJava")
+ipak(packages)
+```
+
+## SUPER LEARNER MODEL
+
+- use the `mean`, `lm`, `rpart`, and `bart` as the candidate base learning models. The best performing models based on our previous implementations on the dataset
+
+```{r}
+rm(list = ls())
+## load the saved single data files
+## load the individual data files
+load("G:\\Shared drives\\amos\\ThesisResults\\TrueModel\\data\\dt_one.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\TrueModel\\data\\dt_two.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\TrueModel\\data\\dt_three.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\TrueModel\\data\\dt_four.RData")
+
+## load the saved list data files
+load("G:\\Shared drives\\amos\\ThesisResults\\TrueModel\\data\\dt1.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\TrueModel\\data\\dt2.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\TrueModel\\data\\dt3.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\TrueModel\\data\\dt4.RData")
+```
+
+
+## FULL DATA ANALYSIS
+
+
+```{r}
+## function to compute SuperLearner on new data
+super_one <- function(df = NULL, cl = cl){
+  all <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.bartMachine", "SL.xgboost"),
+    method = "method.NNLS",
+    cluster = cl)
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = all, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = all, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r cache=TRUE, include=FALSE}
+start.t <- Sys.time()
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+onea = lapply(dt1, super_one, cl)
+end.t =Sys.time()
+end.t - start.t
+oneb = lapply(dt2, super_one, cl)
+onec = lapply(dt3, super_one, cl)
+oned = lapply(dt4, super_one, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+
+## OBSERVED DATA ANALYSIS
+
+
+
+```{r}
+## function to compute SuperLearner on new data
+super_two <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals
+  df <- base::subset(df, R == 1)
+  two <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.bartMachine", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = two, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = two, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r cache=TRUE, include=FALSE}
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+twoa = lapply(dt1, super_two, cl)
+twob = lapply(dt2, super_two, cl)
+twoc = lapply(dt3, super_two, cl)
+twod = lapply(dt4, super_two, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  twoa <- twoa %>% map_dfr(data.frame)
+  twob <- twob %>% map_dfr(data.frame)
+  twoc <- twoc %>% map_dfr(data.frame)
+  twod <- twod %>% map_dfr(data.frame)
+```
+
+
+## OBSERVED MODIFIED ANALYSIS
+
+```{r}
+## function to compute SuperLearner on new data
+super_three <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals and use to fit all the SuperLearner models
+  df_one <- subset(df, R == 1)
+  three <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df_one[, 1]),
+    X = data.frame(df_one[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.bartMachine", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = three, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = three, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r cache=TRUE, include=FALSE}
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+threea = lapply(dt1, super_three, cl)
+threeb = lapply(dt2, super_three, cl)
+threec = lapply(dt3, super_three, cl)
+threed = lapply(dt4, super_three, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  threea <- threea %>% map_dfr(data.frame)
+  threeb <- threeb %>% map_dfr(data.frame)
+  threec <- threec %>% map_dfr(data.frame)
+  threed <- threed %>% map_dfr(data.frame)
+```
+
+## EXPORT RESULTS
+
+```{r}
+## compute the ATE, SD, and Bias across the 1000 data sets based on the correct outcome model specification
+##------------------------------------------------------------------------------
+## case 1 [n = 500, sd = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(dt_one), ate = mean(onea$ATE_adjusted), sd = sd(onea$ATE_adjusted), bias = mean(onea$bias_adjusted), sd_bias = sd(onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(dt_one, R == 1)), ate = mean(twoa$ATE_adjusted), sd = sd(twoa$ATE_adjusted), bias = mean(twoa$bias_adjusted), sd_bias = sd(twoa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(dt_one, R == 1)), ate = mean(threea$ATE_adjusted), sd = sd(threea$ATE_adjusted), bias = mean(threea$bias_adjusted), sd_bias = sd(threea$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, sd = 68]
+##------------------------------------------------------------------------------
+full2 <- c(n = nrow(dt_two), ate = mean(oneb$ATE_adjusted), sd = sd(oneb$ATE_adjusted), bias = mean(oneb$bias_adjusted), sd_bias = sd(oneb$bias_adjusted))
+full2
+## observed
+obs2 <- c(n = nrow(subset(dt_two, R == 1)), ate = mean(twob$ATE_adjusted), sd = sd(twob$ATE_adjusted), bias = mean(twob$bias_adjusted), sd_bias = sd(twob$bias_adjusted))
+obs2
+## observed modified
+obs_m2 <- c(n = nrow(subset(dt_two, R == 1)), ate = mean(threeb$ATE_adjusted), sd = sd(threeb$ATE_adjusted), bias = mean(threeb$bias_adjusted), sd_bias = sd(threeb$bias_adjusted))
+obs_m2
+
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, sd = 1]
+##------------------------------------------------------------------------------
+full3 <- c(n = nrow(dt_three), ate = mean(onec$ATE_adjusted), sd = sd(onec$ATE_adjusted), bias = mean(onec$bias_adjusted), sd_bias = sd(onec$bias_adjusted))
+full3
+## observed
+obs3 <- c(n = nrow(subset(dt_three, R == 1)), ate = mean(twoc$ATE_adjusted), sd = sd(twoc$ATE_adjusted), bias = mean(twoc$bias_adjusted), sd_bias = sd(twoc$bias_adjusted))
+obs3
+## observed modified
+obs_m3 <- c(n = nrow(subset(dt_three, R == 1)), ate = mean(threec$ATE_adjusted), sd = sd(threec$ATE_adjusted), bias = mean(threec$bias_adjusted), sd_bias = sd(threec$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, sd = 45]
+##------------------------------------------------------------------------------
+full4 <- c(n = nrow(dt_four), ate = mean(oned$ATE_adjusted), sd = sd(oned$ATE_adjusted), bias = mean(oned$bias_adjusted), sd_bias = sd(oned$bias_adjusted))
+full4
+## observed
+obs4 <- c(n = nrow(subset(dt_four, R == 1)), ate = mean(twod$ATE_adjusted), sd = sd(twod$ATE_adjusted), bias = mean(twod$bias_adjusted), sd_bias = sd(twod$bias_adjusted))
+obs4
+## observed modified
+obs_m4 <- c(n = nrow(subset(dt_four, R == 1)), ate = mean(threed$ATE_adjusted), sd = sd(threed$ATE_adjusted), bias = mean(threed$bias_adjusted), sd_bias = sd(threed$bias_adjusted))
+obs_m4
+```
+
+## TABLE OF RANDOM FOREST RESULTS
+
+```{r}
+SL <- bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs2, "n = 500, SD = 45" = obs_m2, 
+                                "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs3, "n = 2000, SD = 1" = obs_m3, 
+                                "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs4, "n = 2000, SD = 45" = obs_m4),
+                           .id = "Data generating values") 
+kable(SL, format = "latex", caption = "SuperLearner results averaged across n = 1000 datasets under full, observed, and observed modified analysis")
+
+## the order of the rows starts with n = 500 
+write.csv(SL, file = "G:\\Shared drives\\amos\\ThesisResults\\[8]_superlearner\\superlearner.csv", row.names = FALSE)
+```
+
+## SECTION B
+
+### FUNCTIONS
+
+```{r}
+##load all the data sets for this new simulations
+rm(list = ls())
+
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/df_one.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/df_two.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/df_three.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/df_four.RData")
+
+## load the list data files
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dsets11.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dsets22.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dsets33.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dsets44.RData")
+
+# functions
+super_one <- function(df = NULL, cl = cl){
+  all <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.bartMachine", "SL.xgboost"),
+    method = "method.NNLS",
+    cluster = cl)
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = all, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = all, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+
+
+super_two <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals
+  df <- base::subset(df, R == 1)
+  two <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.bartMachine", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = two, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = two, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+
+super_three <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals and use to fit all the SuperLearner models
+  df_one <- subset(df, R == 1)
+  three <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df_one[, 1]),
+    X = data.frame(df_one[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.bartMachine", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = three, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = three, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+### FULL
+
+```{r}
+start.t <- Sys.time()
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+oneaa = lapply(dsets11, super_one, cl)
+end.t =Sys.time()
+end.t - start.t
+onebb = lapply(dsets22, super_one, cl)
+onecc = lapply(dsets33, super_one, cl)
+onedd = lapply(dsets44, super_one, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  oneaa <- oneaa %>% map_dfr(data.frame)
+  onebb <- onebb %>% map_dfr(data.frame)
+  onecc <- onecc %>% map_dfr(data.frame)
+  onedd <- onedd %>% map_dfr(data.frame)
+```
+
+
+### OBSERVED
+
+```{r}
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+twoaa = lapply(dsets11, super_two, cl)
+twobb = lapply(dsets22, super_two, cl)
+twocc = lapply(dsets33, super_two, cl)
+twodd = lapply(dsets44, super_two, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  twoaa <- twoaa %>% map_dfr(data.frame)
+  twobb <- twobb %>% map_dfr(data.frame)
+  twocc <- twocc %>% map_dfr(data.frame)
+  twodd <- twodd %>% map_dfr(data.frame)
+```
+
+### OBSERVED MODIFIED
+
+```{r}
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+threeaa = lapply(dsets11, super_three, cl)
+threebb = lapply(dsets22, super_three, cl)
+threecc = lapply(dsets33, super_three, cl)
+threedd = lapply(dsets44, super_three, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+# combine the results into a data frame
+  threeaa <- threeaa %>% map_dfr(data.frame)
+  threebb <- threebb %>% map_dfr(data.frame)
+  threecc <- threecc %>% map_dfr(data.frame)
+  threedd <- threedd %>% map_dfr(data.frame)
+```
+
+
+### RESULTS B
+
+```{r}
+##------------------------------------------------------------------------------
+## case 1 [n = 500, sd = 23]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(df_one), ate = mean(oneaa$ATE_adjusted), sd = sd(oneaa$ATE_adjusted), bias = mean(oneaa$bias_adjusted), sd_bias = sd(oneaa$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(df_one, R == 1)), ate = mean(twoaa$ATE_adjusted), sd = sd(twoaa$ATE_adjusted), bias = mean(twoaa$bias_adjusted), sd_bias = sd(twoaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(df_one, R == 1)), ate = mean(threeaa$ATE_adjusted), sd = sd(threeaa$ATE_adjusted), bias = mean(threeaa$bias_adjusted), sd_bias = sd(threeaa$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, sd = 68]
+##------------------------------------------------------------------------------
+full2 <- c(n = nrow(df_two), ate = mean(onebb$ATE_adjusted), sd = sd(onebb$ATE_adjusted), bias = mean(onebb$bias_adjusted), sd_bias = sd(onebb$bias_adjusted))
+full2
+## observed
+obs2 <- c(n = nrow(subset(df_two, R == 1)), ate = mean(twobb$ATE_adjusted), sd = sd(twobb$ATE_adjusted), bias = mean(twobb$bias_adjusted), sd_bias = sd(twobb$bias_adjusted))
+obs2
+## observed modified
+obs_m2 <- c(n = nrow(subset(df_two, R == 1)), ate = mean(threebb$ATE_adjusted), sd = sd(threebb$ATE_adjusted), bias = mean(threebb$bias_adjusted), sd_bias = sd(threebb$bias_adjusted))
+obs_m2
+
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, sd = 1]
+##------------------------------------------------------------------------------
+full3 <- c(n = nrow(df_three), ate = mean(onecc$ATE_adjusted), sd = sd(onecc$ATE_adjusted), bias = mean(onecc$bias_adjusted), sd_bias = sd(onecc$bias_adjusted))
+full3
+## observed
+obs3 <- c(n = nrow(subset(df_three, R == 1)), ate = mean(twocc$ATE_adjusted), sd = sd(twocc$ATE_adjusted), bias = mean(twocc$bias_adjusted), sd_bias = sd(twocc$bias_adjusted))
+obs3
+## observed modified
+obs_m3 <- c(n = nrow(subset(df_three, R == 1)), ate = mean(threecc$ATE_adjusted), sd = sd(threecc$ATE_adjusted), bias = mean(threecc$bias_adjusted), sd_bias = sd(threecc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, sd = 68]
+##------------------------------------------------------------------------------
+full4 <- c(n = nrow(df_four), ate = mean(onedd$ATE_adjusted), sd = sd(onedd$ATE_adjusted), bias = mean(onedd$bias_adjusted), sd_bias = sd(onedd$bias_adjusted))
+full4
+## observed
+obs4 <- c(n = nrow(subset(df_four, R == 1)), ate = mean(twodd$ATE_adjusted), sd = sd(twodd$ATE_adjusted), bias = mean(twodd$bias_adjusted), sd_bias = sd(twodd$bias_adjusted))
+obs4
+## observed modified
+obs_m4 <- c(n = nrow(subset(df_four, R == 1)), ate = mean(threedd$ATE_adjusted), sd = sd(threedd$ATE_adjusted), bias = mean(threedd$bias_adjusted), sd_bias = sd(threedd$bias_adjusted))
+obs_m4
+
+## FINAL TABLE
+SL <- bind_rows(list("n = 500, SD = 23" = full, "n = 500, SD = 23" = obs, "n = 500, SD = 23"= obs_m, 
+                                "n = 500, SD = 68" = full2, "n = 500, SD = 68" = obs2, "n = 500, SD = 68" = obs_m2, 
+                                "n = 2000, SD = 23" = full3, "n = 2000, SD = 23" = obs3, "n = 2000, SD = 23" = obs_m3, 
+                                "n = 2000, SD = 68" = full4, "n = 2000, SD = 68"=  obs4, "n = 2000, SD = 68" = obs_m4),
+                           .id = "Data generating values") 
+kable(SL, format = "latex", caption = "Version 2")
+
+## the order of the rows starts with n = 500 
+write.csv(SL, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/[8]_super_learner/superlearnerb.csv", row.names = FALSE)
+```
+
+
+
+

@@ -1,0 +1,307 @@
+---
+title: "Unadjusted ATE Estimation"
+#subtitle: 
+author: "Amos Okutse"
+date: "  `r format(Sys.time(), '%d %B, %Y')` "
+header-includes:
+- \usepackage{color, colortbl}  % for using table colors
+- \definecolor{Gray}{gray}{0.9}  %define the color to be used
+- \usepackage{multirow}
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{fvextra}
+- \usepackage{float}
+- \usepackage{wrapfig}
+- \usepackage{amsmath}
+- \usepackage{float}
+- \usepackage{graphicx}
+- \usepackage{microtype}
+- \usepackage{setspace}
+- \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
+- \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
+#- \onehalfspacing
+fontsize: 10pt
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    #keep_md: true
+link-citation: yes
+colorlinks: yes
+linkcolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	cache = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center',
+	fig.pos = 'H',
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr")
+ipak(packages)
+```
+
+### LOAD DATA
+
+```{r}
+rm(list = ls())
+## load the saved single data files
+
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_one.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_two.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_three.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\df_four.RData")
+
+## load the saved list data files
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets1.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets2.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets3.RData")
+load("G:\\Shared drives\\amos\\ThesisResults\\data\\dsets4.RData")
+```
+
+
+## UNADJUSTED RESULTS
+
+```{r}
+## function to return the estimated treatment effects across n = 1000 data sets
+
+## - full data
+##- observed data
+## - observed modified
+
+unadj <- function(df = NULL){
+  ## since this is based on the full data set, then use the full data set
+  full_unadjusted = mean(df$y[df$A == 1]) - mean(df$y[df$A == 0])
+  full_bias_unadjusted = full_unadjusted - 50
+  
+  ## subset the data to only subjects with R == 1
+  df2 <- dplyr::filter(df, R == 1)
+  observed_unadjusted = mean(df2$y[df2$A == 1]) - mean(df2$y[df2$A == 0])
+  observed_bias = observed_unadjusted - 50
+  return(data.frame(full_unadjusted, full_bias_unadjusted, observed_unadjusted, observed_bias))
+}
+```
+
+```{r include=FALSE}
+## set up the parallel processing
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl=makeCluster(cores)
+clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+
+# get the results under each data set
+  onea = parLapply(cl, dsets1, unadj) # n = 500 ; sd = 1
+  oneb = parLapply(cl, dsets2, unadj) # n = 500 ; sd = 45
+  onec = parLapply(cl, dsets3, unadj) # n = 2000; sd = 1
+  oned = parLapply(cl, dsets4, unadj) # n = 2000; sd = 45
+stopCluster(cl)
+```
+
+
+```{r}
+## analyze the results into a table
+df_onea <- onea %>% map_dfr(data.frame) # n = 500; sd = 1
+df_oneb <- oneb %>% map_dfr(data.frame) # n = 500; sd = 45
+df_onec <- onec %>% map_dfr(data.frame) # n = 2000; sd = 1
+df_oned <- oned %>% map_dfr(data.frame) # n = 2000; sd = 1
+
+```
+
+
+## EXTRACT THE RESULTS 
+
+
+```{r include=FALSE}
+options(scipen = 999)
+##------------------------------------------------------------------------------
+## Case 1: n = 500, SD = 1
+##------------------------------------------------------------------------------
+## Full analysis
+full = c(n = nrow(df_one), ate = mean(df_onea$full_unadjusted), sd = sd(df_onea$full_unadjusted), bias = mean(df_onea$full_bias_unadjusted), sd_bias = sd(df_onea$full_bias_unadjusted))
+full
+## observed
+obs = c(n = nrow(base::subset(df_one, R == 1)), ate = mean(df_onea$observed_unadjusted), sd = sd(df_onea$observed_unadjusted), bias = mean(df_onea$observed_bias), sd_bias = sd(df_onea$observed_bias))
+obs
+
+##------------------------------------------------------------------------------
+## Case 2: n = 500, SD = 45
+##------------------------------------------------------------------------------
+## Full analysis
+full2 = c(n = nrow(df_two), ate = mean(df_oneb$full_unadjusted), sd = sd(df_oneb$full_unadjusted), bias = mean(df_oneb$full_bias_unadjusted), sd_bias = sd(df_oneb$full_bias_unadjusted))
+full2
+## observed
+obs2 = c(n = nrow(base::subset(df_two, R == 1)), ate = mean(df_oneb$observed_unadjusted), sd = sd(df_oneb$observed_unadjusted), bias = mean(df_oneb$observed_bias), sd_bias = sd(df_oneb$observed_bias))
+obs2
+
+##------------------------------------------------------------------------------
+## Case 3: n = 2000, SD = 1
+##------------------------------------------------------------------------------
+
+full3 = c(n = nrow(df_three), ate = mean(df_onec$full_unadjusted), sd = sd(df_onec$full_unadjusted), bias = mean(df_onec$full_bias_unadjusted), sd_bias = sd(df_onec$full_bias_unadjusted))
+full3
+## observed
+obs3 = c(n = nrow(base::subset(df_three, R == 1)), ate = mean(df_onec$observed_unadjusted), sd = sd(df_onec$observed_unadjusted), bias = mean(df_onec$observed_bias), sd_bias = sd(df_onec$observed_bias))
+obs3
+
+
+##------------------------------------------------------------------------------
+## Case 4: n = 2000, SD = 45
+##------------------------------------------------------------------------------
+
+full4 = c(n = nrow(df_four), ate = mean(df_oned$full_unadjusted), sd = sd(df_oned$full_unadjusted), bias = mean(df_oned$full_bias_unadjusted), sd_bias = sd(df_oned$full_bias_unadjusted))
+full4
+## observed
+obs4 = c(n = nrow(base::subset(df_four, R == 1)), ate = mean(df_oned$observed_unadjusted), sd = sd(df_oned$observed_unadjusted), bias = mean(df_oned$observed_bias), sd_bias = sd(df_oned$observed_bias))
+obs4
+```
+
+
+```{r}
+## create final table of results
+unadjusted = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, 
+                            "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs2, 
+                            "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs3, 
+                            "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs4), 
+                       .id = "Data generating values") 
+kable(unadjusted, format = "latex", caption = "Unadjusted estimates of the average treatment effect across n = 1000 datasets under full and observed data analysis")
+
+
+## the order of the rows starts with n = 500 
+write.csv(unadjusted, file = "G:\\Shared drives\\amos\\ThesisResults\\[1]_unadjusted\\unadjusted_results.csv", row.names = FALSE)
+```
+
+## SECTION B
+
+
+```{r}
+##load all the data sets for this new simulations
+rm(list = ls())
+
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/df_one.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/df_two.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/df_three.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/df_four.RData")
+
+## load the list data files
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dsets11.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dsets22.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dsets33.RData")
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dsets44.RData")
+
+
+## functions
+unadj <- function(df = NULL){
+  ## since this is based on the full data set, then use the full data set
+  full_unadjusted = mean(df$y[df$A == 1]) - mean(df$y[df$A == 0])
+  full_bias_unadjusted = full_unadjusted - 50
+  
+  ## subset the data to only subjects with R == 1
+  df2 <- dplyr::filter(df, R == 1)
+  observed_unadjusted = mean(df2$y[df2$A == 1]) - mean(df2$y[df2$A == 0])
+  observed_bias = observed_unadjusted - 50
+  return(data.frame(full_unadjusted, full_bias_unadjusted, observed_unadjusted, observed_bias))
+}
+```
+
+```{r}
+## set up the parallel processing 
+cores <- parallel::detectCores()-1
+doParallel::registerDoParallel(cores)
+cl = parallel::makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+# get the results under each data set
+  oneaa = parLapply(cl, dsets11, unadj) # n = 500 ; sd = 1
+  onebb = parLapply(cl, dsets22, unadj) # n = 500 ; sd = 45
+  onecc = parLapply(cl, dsets33, unadj) # n = 2000; sd = 1
+  onedd = parLapply(cl, dsets44, unadj) # n = 2000; sd = 45
+stopCluster(cl)
+```
+
+```{r}
+## analyze the results into a table
+df_oneaa <- oneaa %>% map_dfr(data.frame) # n = 500; sd = 1
+df_onebb <- onebb %>% map_dfr(data.frame) # n = 500; sd = 45
+df_onecc <- onecc %>% map_dfr(data.frame) # n = 2000; sd = 1
+df_onedd <- onedd %>% map_dfr(data.frame) # n = 2000; sd = 1
+```
+
+## RESULTS B
+
+```{r}
+##------------------------------------------------------------------------------
+## Case 1: n = 500, SD = 23
+##------------------------------------------------------------------------------
+## Full analysis
+full = c(n = nrow(df_one), ate = mean(df_oneaa$full_unadjusted), sd = sd(df_oneaa$full_unadjusted), bias = mean(df_oneaa$full_bias_unadjusted), sd_bias = sd(df_oneaa$full_bias_unadjusted))
+full
+## observed
+obs = c(n = nrow(base::subset(df_one, R == 1)), ate = mean(df_oneaa$observed_unadjusted), sd = sd(df_oneaa$observed_unadjusted), bias = mean(df_oneaa$observed_bias), sd_bias = sd(df_oneaa$observed_bias))
+obs
+
+##------------------------------------------------------------------------------
+## Case 2: n = 500, SD = 68
+##------------------------------------------------------------------------------
+## Full analysis
+full2 = c(n = nrow(df_two), ate = mean(df_onebb$full_unadjusted), sd = sd(df_onebb$full_unadjusted), bias = mean(df_onebb$full_bias_unadjusted), sd_bias = sd(df_onebb$full_bias_unadjusted))
+full2
+## observed
+obs2 = c(n = nrow(base::subset(df_two, R == 1)), ate = mean(df_onebb$observed_unadjusted), sd = sd(df_onebb$observed_unadjusted), bias = mean(df_onebb$observed_bias), sd_bias = sd(df_onebb$observed_bias))
+obs2
+
+##------------------------------------------------------------------------------
+## Case 3: n = 2000, SD = 23
+##------------------------------------------------------------------------------
+
+full3 = c(n = nrow(df_three), ate = mean(df_onecc$full_unadjusted), sd = sd(df_onecc$full_unadjusted), bias = mean(df_onecc$full_bias_unadjusted), sd_bias = sd(df_onecc$full_bias_unadjusted))
+full3
+## observed
+obs3 = c(n = nrow(base::subset(df_three, R == 1)), ate = mean(df_onecc$observed_unadjusted), sd = sd(df_onecc$observed_unadjusted), bias = mean(df_onecc$observed_bias), sd_bias = sd(df_onecc$observed_bias))
+obs3
+
+
+##------------------------------------------------------------------------------
+## Case 4: n = 2000, SD = 68
+##------------------------------------------------------------------------------
+
+full4 = c(n = nrow(df_four), ate = mean(df_onedd$full_unadjusted), sd = sd(df_onedd$full_unadjusted), bias = mean(df_onedd$full_bias_unadjusted), sd_bias = sd(df_onedd$full_bias_unadjusted))
+full4
+## observed
+obs4 = c(n = nrow(base::subset(df_four, R == 1)), ate = mean(df_onedd$observed_unadjusted), sd = sd(df_onedd$observed_unadjusted), bias = mean(df_onedd$observed_bias), sd_bias = sd(df_onedd$observed_bias))
+obs4
+
+## create final table of results
+unadjusted = bind_rows(list("n = 500, SD = 23" = full, "n = 500, SD = 23" = obs, 
+                            "n = 500, SD = 68" = full2, "n = 500, SD = 68" = obs2, 
+                            "n = 2000, SD = 23" = full3, "n = 2000, SD = 23" = obs3, 
+                            "n = 2000, SD = 68" = full4, "n = 2000, SD = 68"=  obs4), 
+                       .id = "Data generating values") 
+kable(unadjusted, format = "latex", caption = "version 2")
+
+
+## the order of the rows starts with n = 500 
+write.csv(unadjusted, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/[1]_unadjusted/unadjusted_resultsb.csv", row.names = FALSE)
+
+```
+
+
+
+
