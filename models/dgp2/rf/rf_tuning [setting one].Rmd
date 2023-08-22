@@ -1,0 +1,689 @@
+---
+title: "Random Forest Model Training"
+subtitle: "Random forest hyperparameters tuning"
+author: "Amos Okutse"
+date: "  `r format(Sys.time(), '%d %B, %Y')` "
+header-includes:
+- \usepackage{color, colortbl}  % for using table colors
+- \definecolor{Gray}{gray}{0.9}  %define the color to be used
+- \usepackage{multirow}
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{fvextra}
+- \usepackage{float}
+- \usepackage{wrapfig}
+- \usepackage{amsmath}
+- \usepackage{float}
+- \usepackage{graphicx}
+- \usepackage{microtype}
+- \usepackage{setspace}
+- \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
+- \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
+#- \onehalfspacing
+fontsize: 10pt
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    #keep_md: true
+link-citation: yes
+colorlinks: yes
+linkcolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	cache = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center',
+	fig.pos = 'H',
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr")
+ipak(packages)
+```
+
+```{r echo=FALSE, eval=FALSE}
+bytes <- file.size("simulation_six_v3.Rmd")
+words <- bytes/10
+minutes <- words/200
+```
+
+
+
+
+## Simulation setting one
+
+```{r}
+## load the saved data sets for setting 1
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/one.RData")
+```
+
+### Full data modelling [case 1 when n = 500 and sd = 1]
+
+- All model parameter tuning are based on the full data.
+
+- Parameters are explored for all possible scenarios on the full data set with 10-fold cross-validation.
+
+- We use a space-filling grid design and search parameters across a grid of 25 models using cross-validation.
+
+
+```{r}
+
+## using data with n = 500 and sd = 1 
+
+train <- s_onea %>% dplyr::select(y, A, x1, x2, x3, x4)
+
+## create the random forest model object 
+rf_model <- rand_forest(trees = 1000, mtry = tune(), min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+## create the workflow
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+## create the procedure for validating the model
+val_set <- validation_split(train, prop = 0.80)
+
+## set up the set of metrics to gather from the models [there is no mse; can't use accuracy too which is for class]
+metrics <- metric_set(rmse, rsq) ## rsq=coefficient of determination = 
+
+
+## create the re-sampling folds for hyper-parameter tuning
+set.seed(345)
+folds <- vfold_cv(train, v = 10)
+
+
+## fit re-samples and estimate the hyper parameters
+doParallel::registerDoParallel()  ## leverage parallel processing
+
+set.seed(456)
+rf_results <- rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            resamples = folds,
+            control = control_grid(save_pred = TRUE), #saving preds allows collecting the metrics
+            metrics = metric_set(rmse))
+
+rf_results %>% show_best(metric = "rmse")
+
+## can plot the best models
+autoplot(rf_results)
+
+
+## rf best model based on accuracy
+rf_best = rf_results %>% 
+  select_best(metric = "rmse") 
+rf_best
+```
+
+
+```{r fig.cap="Variable importance for the full data case with $n = 500$ and $SD = 1$"}
+## variable importance??
+final_md <- finalize_model(rf_model, rf_best)
+options(scipen = 999)
+full_one <- final_md %>%
+ set_engine("ranger", importance = "impurity") %>%
+  fit(y ~ A + x1 + x2 + x3 + x4,
+    data = s_onea) %>%
+  vip::vip(geom = "col") + theme_minimal()
+full_one
+```
+
+
+
+
+### Full data modeling [case 2 when n = 500 and sd = 45]
+
+
+- We use a space-filling grid design and search parameters across a grid of 25 models using cross-validation.
+
+```{r}
+
+## using data with n = 500 and sd = 45 (df_two) 
+
+train <- s_oneb %>% dplyr::select(y, A, x1, x2, x3, x4)
+
+
+## create the random forest model object 
+rf_model <- rand_forest(trees = 1000, mtry = tune(), min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+## create the workflow
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+## create the procedure for validating the model
+val_set <- validation_split(train, prop = 0.80)
+
+## set up the set of metrics to gather from the models [there is no mse; can't use accuracy too which is for class]
+metrics <- metric_set(rmse, rsq) ## rsq=coefficient of determination = 
+
+
+## create the re-sampling folds for hyper-parameter tuning
+set.seed(345)
+folds <- vfold_cv(train, v = 10)
+
+
+## fit re-samples and estimate the hyper parameters
+doParallel::registerDoParallel()  ## leverage parallel processing
+
+set.seed(456)
+rf_results <- rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            resamples = folds,
+            control = control_grid(save_pred = TRUE), #saving preds allows collecting the metrics
+            metrics = metric_set(rmse))
+
+rf_results %>% show_best(metric = "rmse")
+
+## can plot the best models
+autoplot(rf_results)
+
+
+## rf best model based on accuracy
+rf_best = rf_results %>% 
+  select_best(metric = "rmse") 
+rf_best
+```
+
+```{r fig.cap="Variable importance for the full data case with $n = 500$ and $SD = 45$"}
+## summarize variable importance
+final_md2 <- finalize_model(rf_model, rf_best)
+options(scipen = 999)
+full_two <- final_md2 %>%
+ set_engine("ranger", importance = "impurity") %>%
+  fit(y ~ A + x1 + x2 + x3 + x4,
+    data = s_oneb) %>%
+  vip::vip(geom = "col") + theme_minimal()
+full_two
+```
+
+
+### Full data modeling [case 3 when n = 2000 and sd = 1]
+
+
+- We use a space-filling grid design and search parameters across a grid of 25 models using cross-validation.
+
+```{r}
+
+## using data with n = 2000 and sd = 1 (df_three) 
+
+train <- s_onec %>% dplyr::select(y, A, x1, x2, x3, x4)
+
+
+## create the random forest model object 
+rf_model <- rand_forest(trees = 1000, mtry = tune(), min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+## create the workflow
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+## create the procedure for validating the model
+val_set <- validation_split(train, prop = 0.80)
+
+## set up the set of metrics to gather from the models [there is no mse; can't use accuracy too which is for class]
+metrics <- metric_set(rmse, rsq) ## rsq=coefficient of determination = 
+
+
+## create the re-sampling folds for hyper-parameter tuning
+set.seed(345)
+folds <- vfold_cv(train, v = 10)
+
+
+## fit re-samples and estimate the hyper parameters
+doParallel::registerDoParallel()  ## leverage parallel processing
+
+set.seed(456)
+rf_results <- rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            resamples = folds,
+            control = control_grid(save_pred = TRUE), #saving preds allows collecting the metrics
+            metrics = metric_set(rmse))
+
+rf_results %>% show_best(metric = "rmse")
+
+## can plot the best models
+autoplot(rf_results)
+
+
+## rf best model based on accuracy
+rf_best = rf_results %>% 
+  select_best(metric = "rmse") 
+rf_best
+```
+
+```{r fig.cap="Variable importance for the full data case with $n = 2000$ and $SD = 1$"}
+## summarize variable importance
+final_md3 <- finalize_model(rf_model, rf_best)
+options(scipen = 999)
+full_three <- final_md3 %>%
+ set_engine("ranger", importance = "impurity") %>%
+  fit(y ~ A + x1 + x2 + x3 + x4,
+    data = s_onec) %>%
+  vip::vip(geom = "col") + theme_minimal()
+full_three
+```
+
+### Full data modeling [case 4 when n = 2000 and sd = 45]
+
+
+- We use a space-filling grid design and search parameters across a grid of 25 models using cross-validation.
+
+```{r}
+## using data with n = 2000 and sd = 45 (df_three) 
+
+train <- s_oned %>% dplyr::select(y, A, x1, x2, x3, x4)
+
+
+## create the random forest model object 
+rf_model <- rand_forest(trees = 1000, mtry = tune(), min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+## create the workflow
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+## create the procedure for validating the model
+val_set <- validation_split(train, prop = 0.80)
+
+## set up the set of metrics to gather from the models [there is no mse; can't use accuracy too which is for class]
+metrics <- metric_set(rmse, rsq) ## rsq=coefficient of determination = 
+
+
+## create the re-sampling folds for hyper-parameter tuning
+set.seed(345)
+folds <- vfold_cv(train, v = 10)
+
+
+## fit re-samples and estimate the hyper parameters
+doParallel::registerDoParallel()  ## leverage parallel processing
+
+set.seed(456)
+rf_results <- rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            resamples = folds,
+            control = control_grid(save_pred = TRUE), #saving preds allows collecting the metrics
+            metrics = metric_set(rmse))
+
+rf_results %>% show_best(metric = "rmse")
+
+## can plot the best models
+autoplot(rf_results)
+
+
+## rf best model based on accuracy
+rf_best = rf_results %>% 
+  select_best(metric = "rmse") 
+rf_best
+
+```
+
+
+```{r fig.cap="Variable importance for the full data case with $n = 2000$ and $SD = 45$"}
+## summarize variable importance
+final_md4 <- finalize_model(rf_model, rf_best)
+options(scipen = 999)
+full_four <- final_md4 %>%
+ set_engine("ranger", importance = "impurity") %>%
+  fit(y ~ A + x1 + x2 + x3 + x4,
+    data = s_oned) %>%
+  vip::vip(geom = "col") + theme_minimal()
+full_four
+
+```
+
+
+## TUNING ON OBSERVED DATA
+
+### [case 1 when n = 500 and sd = 1]
+
+- All model parameter tuning are based on the full data.
+
+- Parameters are explored for all possible scenarios on the full data set with 10-fold cross-validation.
+
+- We use a space-filling grid design and search parameters across a grid of 25 models using cross-validation.
+
+
+```{r}
+
+## using data with n = 500 and sd = 1 (df_one) 
+
+train1 <- s_onea %>% dplyr::select(y, A, x1, x2, x3, x4, R) %>% 
+  dplyr::filter(R == 1)
+train <- train1[, -7]
+
+
+## create the random forest model object 
+rf_model <- rand_forest(trees = 1000, mtry = tune(), min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+## create the workflow
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+## create the procedure for validating the model
+val_set <- validation_split(train, prop = 0.80)
+
+## set up the set of metrics to gather from the models [there is no mse; can't use accuracy too which is for class]
+metrics <- metric_set(rmse, rsq) ## rsq=coefficient of determination = 
+
+
+## create the re-sampling folds for hyper-parameter tuning
+set.seed(345)
+folds <- vfold_cv(train, v = 10)
+
+
+## fit re-samples and estimate the hyper parameters
+doParallel::registerDoParallel()  ## leverage parallel processing
+
+set.seed(456)
+rf_results <- rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            resamples = folds,
+            control = control_grid(save_pred = TRUE), #saving preds allows collecting the metrics
+            metrics = metric_set(rmse))
+
+rf_results %>% show_best(metric = "rmse")
+
+## can plot the best models
+autoplot(rf_results)
+
+
+## rf best model based on accuracy
+rf_best = rf_results %>% 
+  select_best(metric = "rmse") 
+rf_best
+```
+
+```{r fig.cap="Variable importance for the observed data case with $n = 500$ and $SD = 1$"}
+## summarize variable importance
+final_obs <- finalize_model(rf_model, rf_best)
+options(scipen = 999)
+obs_one <- final_obs %>%
+ set_engine("ranger", importance = "impurity") %>%
+  fit(y ~ A + x1 + x2 + x3 + x4,
+    data = base::subset(s_onea, R == 1)[, -7]) %>%
+  vip::vip(geom = "col") + theme_minimal()
+obs_one
+
+```
+
+
+### [case 2 when n = 500 and sd = 45]
+
+
+- We use a space-filling grid design and search parameters across a grid of 25 models using cross-validation.
+
+
+```{r}
+
+## using data with n = 500 and sd = 45 (df_two) 
+
+train1 <- s_oneb %>% dplyr::select(y, A, x1, x2, x3, x4, R) %>% 
+  dplyr::filter(R == 1)
+train = train1[, -7]
+
+
+## create the random forest model object 
+rf_model <- rand_forest(trees = 1000, mtry = tune(), min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+## create the workflow
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+## create the procedure for validating the model
+val_set <- validation_split(train, prop = 0.80)
+
+## set up the set of metrics to gather from the models [there is no mse; can't use accuracy too which is for class]
+metrics <- metric_set(rmse, rsq) ## rsq=coefficient of determination = 
+
+
+## create the re-sampling folds for hyper-parameter tuning
+set.seed(345)
+folds <- vfold_cv(train, v = 10)
+
+
+## fit re-samples and estimate the hyper parameters
+doParallel::registerDoParallel()  ## leverage parallel processing
+
+set.seed(456)
+rf_results <- rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            resamples = folds,
+            control = control_grid(save_pred = TRUE), #saving preds allows collecting the metrics
+            metrics = metric_set(rmse))
+
+rf_results %>% show_best(metric = "rmse")
+
+## can plot the best models
+autoplot(rf_results)
+
+
+## rf best model based on accuracy
+rf_best = rf_results %>% 
+  select_best(metric = "rmse") 
+rf_best
+```
+
+
+```{r eval=FALSE, fig.cap="Variable importance for the observed data case with $n = 500$ and $SD = 45$"}
+
+## summarize variable importance
+final_obs <- finalize_model(rf_model, rf_best)
+options(scipen = 999)
+obs_two <- final_obs %>%
+ set_engine("ranger", importance = "impurity") %>%
+  fit(y ~ .,
+    data = base::subset(df_two, R == 1)[, -7]) %>%
+  vip::vip(geom = "col") + theme_minimal()
+obs_two
+```
+
+
+### [case 3 when n = 2000 and sd = 1]
+
+
+- We use a space-filling grid design and search parameters across a grid of 25 models using cross-validation.
+
+```{r}
+
+## using data with n = 2000 and sd = 1 (df_three) 
+
+train1 <- s_onec %>% dplyr::select(y, A, x1, x2, x3, x4, R) %>% 
+  dplyr::filter(R == 1)
+train = train1[, -7]
+
+
+## create the random forest model object 
+rf_model <- rand_forest(trees = 1000, mtry = tune(), min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+## create the workflow
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+## create the procedure for validating the model
+val_set <- validation_split(train, prop = 0.80)
+
+## set up the set of metrics to gather from the models [there is no mse; can't use accuracy too which is for class]
+metrics <- metric_set(rmse, rsq) ## rsq=coefficient of determination = 
+
+
+## create the re-sampling folds for hyper-parameter tuning
+set.seed(345)
+folds <- vfold_cv(train, v = 10)
+
+
+## fit re-samples and estimate the hyper parameters
+doParallel::registerDoParallel()  ## leverage parallel processing
+
+set.seed(456)
+rf_results <- rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            resamples = folds,
+            control = control_grid(save_pred = TRUE), #saving preds allows collecting the metrics
+            metrics = metric_set(rmse))
+
+rf_results %>% show_best(metric = "rmse")
+
+## can plot the best models
+autoplot(rf_results)
+
+
+## rf best model based on accuracy
+rf_best = rf_results %>% 
+  select_best(metric = "rmse") 
+rf_best
+```
+
+
+```{r eval = FALSE, fig.cap="Variable importance for the observed data case with $n = 2000$ and $SD = 1$"}
+## summarize variable importance
+final_obs <- finalize_model(rf_model, rf_best)
+options(scipen = 999)
+obs_three <- final_obs %>%
+ set_engine("ranger", importance = "impurity") %>%
+  fit(y ~ .,
+    data = base::subset(df_three, R == 1)[, -7]) %>%
+  vip::vip(geom = "col") + theme_minimal()
+obs_three
+```
+
+### [case 4 when n = 2000 and sd = 45]
+
+
+- We use a space-filling grid design and search parameters across a grid of 25 models using cross-validation.
+
+```{r}
+## using data with n = 2000 and sd = 45 (df_three) 
+
+train1 <- s_oned %>% dplyr::select(y, A, x1, x2, x3, x4, R) %>% 
+  dplyr::filter(R == 1)
+train = train1[, -7]
+
+
+## create the random forest model object 
+rf_model <- rand_forest(trees = 1000, mtry = tune(), min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+## create the workflow
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+## create the procedure for validating the model
+val_set <- validation_split(train, prop = 0.80)
+
+## set up the set of metrics to gather from the models [there is no mse; can't use accuracy too which is for class]
+metrics <- metric_set(rmse, rsq) ## rsq=coefficient of determination = 
+
+
+## create the re-sampling folds for hyper-parameter tuning
+set.seed(345)
+folds <- vfold_cv(train, v = 10)
+
+
+## fit re-samples and estimate the hyper parameters
+doParallel::registerDoParallel()  ## leverage parallel processing
+
+set.seed(456)
+rf_results <- rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            resamples = folds,
+            control = control_grid(save_pred = TRUE), #saving preds allows collecting the metrics
+            metrics = metric_set(rmse))
+
+rf_results %>% show_best(metric = "rmse")
+
+## can plot the best models
+autoplot(rf_results)
+
+
+## rf best model based on accuracy
+rf_best = rf_results %>% 
+  select_best(metric = "rmse") 
+rf_best
+```
+
+
+```{r eval=FALSE, fig.cap="Variable importance for the observed data case with $n = 2000$ and $SD = 45$"}
+
+## summarize variable importance
+final_obs <- finalize_model(rf_model, rf_best)
+options(scipen = 999)
+obs_four <- final_obs %>%
+ set_engine("ranger", importance = "impurity") %>%
+  fit(y ~ .,
+    data = base::subset(df_four, R == 1)[, -7]) %>%
+  vip::vip(geom = "col") + theme_minimal()
+obs_four
+
+## create a grid of variable importance across all the cases under full data hyper-parameter tuning
+jpeg("vip.jpeg", width = 4, height = 4, units = 'in', res = 300)
+full_four
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,606 @@
+---
+title: "eXtreme Gradient Boosted Trees Training (xGBoost) under simulation setting 2"
+subtitle: "Dataset specific hyper-parameter tuning for min_n, tree_depth, learn_rate, and loss reduction"
+author: "Amos Okutse"
+date: "`r Sys.Date() `"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	cache = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center',
+	fig.pos = 'H',
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr")
+ipak(packages)
+```
+
+
+
+## Introduction
+
+- explain the model, how it works, and the loss function/objective function
+- why xgboost model rather than light gbm
+
+XGBoost is an optimized Gradient Boosting Machine Learning library. It is originally written in C++, but has API in several other languages. The core XGBoost algorithm is parallelizable i.e. it does parallelization within a single tree. There are some of the cons of using XGBoost:
+
+It is one of the most powerful algorithms with high speed and performance.
+It can harness all the processing power of modern multicore computers.
+It is feasible to train on large datasets.
+Consistently outperform all single algorithm methods.
+
+
+- Hyper-parameter tuning for the XGBoost model
+
+We are using the `dails::grid_max_entropy()` function which covers the hyperparameter space such that any portion of the space has an observed combination that is not too far from it.
+
+To tune our model, we perform grid search over our xgboost_grid’s grid space to identify the hyperparameter values that have the lowest prediction error.
+
+tune_grid() performed grid search over all our 30 grid parameter combinations defined in xgboost_grid and used 10 fold cross validation along with rmse (Root Mean Squared Error), rsq (R Squared), and mae (Mean Absolute Error) to measure prediction accuracy. So our tidymodels tuning just fit 60 X 5 = 300 XGBoost models each with 1,000 trees all in search of the optimal hyperparameters. 
+
+- Tuning procedure adapted from the blog: https://www.r-bloggers.com/2020/05/using-xgboost-with-tidymodels/ and the blog https://juliasilge.com/blog/xgboost-tune-volleyball/
+
+
+
+## Simulation setting 1
+
+```{r}
+## load the saved data sets for setting 1
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/two.RData")
+```
+
+## HYPER-PARAMETER TUNING FOR FULL DATA ANALYSIS
+## Case 1 [n = 500 and SD = 1]
+
+```{r}
+
+## data
+train <- s_twoa %>% dplyr::select(y, A, x1, x2, x3, x4)
+
+# XGBoost model specification
+xgboost_model <- 
+  parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = tune(), ## then # of data points at a node before being split further
+    tree_depth = tune(),  ## max depth of a tree
+    learn_rate = tune(),  ## shrinkage parameter; step size
+    loss_reduction = tune()#,  ## ctrls model complexity
+    #mtry = tune(),  ## predictors to be randomly sampled at a node
+    #sample_size = tune(),  ## randomness; prop sampled for training
+    #stop_iter = tune()  ## # of iterations without improvement before stopping
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror", nthreads = parallel::detectCores()-1)
+
+
+# grid specification for tuning the hyper-parameters
+## first set-up the parameters to be tuned 
+xgboost_params <- 
+  dials::parameters(
+    min_n(),
+    tree_depth(),
+    learn_rate(),
+    loss_reduction()
+  )
+## then use the vector of parameters in the grid_max_entropy() call for parameter tuning
+xgboost_grid <- 
+  dials::grid_max_entropy(
+    xgboost_params, 
+    size = 30
+  )
+knitr::kable(head(xgboost_grid)) ## print out some of the grid values
+
+
+# define the workflow
+xgboost_wf <- 
+  workflows::workflow() %>%
+  add_model(xgboost_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+# set up the cross-validation folds
+cv_folds <- vfold_cv(train, v = 10)
+
+# hyper-parameter tuning via tune_grid()
+
+doParallel::registerDoParallel()
+set.seed(123)
+xgboost_tuned <- tune::tune_grid(
+  object = xgboost_wf,
+  resamples = cv_folds,
+  grid = xgboost_grid,
+  metrics = yardstick::metric_set(yardstick::rmse), ## can use mae and rsq
+  control = tune::control_grid(verbose = TRUE)
+)
+
+# isolate the best performing model parameters
+xgboost_best_params <- xgboost_tuned %>%
+  tune::select_best("rmse")
+knitr::kable(xgboost_best_params)
+```
+
+## Case 2 [n = 500, SD = 45]
+
+```{r}
+
+## data
+train <- s_twob %>% dplyr::select(y, A, x1, x2, x3, x4)
+
+# XGBoost model specification
+xgboost_model <- 
+  parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = tune(), ## then # of data points at a node before being split further
+    tree_depth = tune(),  ## max depth of a tree
+    learn_rate = tune(),  ## shrinkage parameter; step size
+    loss_reduction = tune()  ## ctrls model complexity
+    
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror", nthreads = parallel::detectCores()-1)
+
+
+# grid specification for tuning the hyper-parameters
+## first set-up the parameters to be tuned 
+xgboost_params <- 
+  dials::parameters(
+    min_n(),
+    tree_depth(),
+    learn_rate(),
+    loss_reduction()
+  )
+## then use the vector of parameters in the grid_max_entropy() call for parameter tuning
+xgboost_grid <- 
+  dials::grid_max_entropy(
+    xgboost_params, 
+    size = 30
+  )
+knitr::kable(head(xgboost_grid)) ## print out some of the grid values
+
+
+# define the workflow
+xgboost_wf <- 
+  workflows::workflow() %>%
+  add_model(xgboost_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+# set up the cross-validation folds
+cv_folds <- vfold_cv(train, v = 10)
+
+# hyper-parameter tuning via tune_grid()
+
+doParallel::registerDoParallel()
+set.seed(123)
+xgboost_tuned <- tune::tune_grid(
+  object = xgboost_wf,
+  resamples = cv_folds,
+  grid = xgboost_grid,
+  metrics = yardstick::metric_set(rmse), ## can use mae and rsq
+  control = tune::control_grid(verbose = TRUE)
+)
+
+# isolate the best performing model parameters
+xgboost_best_params <- xgboost_tuned %>%
+  tune::select_best("rmse")
+knitr::kable(xgboost_best_params)
+```
+
+
+## Case 3 [n = 2000, SD = 1]
+
+```{r}
+
+## data
+train <- s_twoc %>% dplyr::select(y, A, x1, x2, x3, x4)
+
+# XGBoost model specification
+xgboost_model <- 
+  parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = tune(), ## then # of data points at a node before being split further
+    tree_depth = tune(),  ## max depth of a tree
+    learn_rate = tune(),  ## shrinkage parameter; step size
+    loss_reduction = tune()
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror", nthreads = parallel::detectCores()-1)
+
+
+# grid specification for tuning the hyper-parameters
+## first set-up the parameters to be tuned 
+xgboost_params <- 
+  dials::parameters(
+    min_n(),
+    tree_depth(),
+    learn_rate(),
+    loss_reduction()
+  )
+## then use the vector of parameters in the grid_max_entropy() call for parameter tuning
+xgboost_grid <- 
+  dials::grid_max_entropy(
+    xgboost_params, 
+    size = 30
+  )
+knitr::kable(head(xgboost_grid)) ## print out some of the grid values
+
+
+# define the workflow
+xgboost_wf <- 
+  workflows::workflow() %>%
+  add_model(xgboost_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+# set up the cross-validation folds
+cv_folds <- vfold_cv(train, v = 10)
+
+# hyper-parameter tuning via tune_grid()
+
+doParallel::registerDoParallel()
+set.seed(123)
+xgboost_tuned <- tune::tune_grid(
+  object = xgboost_wf,
+  resamples = cv_folds,
+  grid = xgboost_grid,
+  metrics = yardstick::metric_set(rmse), ## can use mae and rsq
+  control = tune::control_grid(verbose = TRUE)
+)
+
+# isolate the best performing model parameters
+xgboost_best_params <- xgboost_tuned %>%
+  tune::select_best("rmse")
+knitr::kable(xgboost_best_params)
+```
+
+## Case 4 [n = 2000, SD = 45]
+
+```{r}
+
+## data
+train <- s_twod %>% dplyr::select(y, A, x1, x2, x3, x4)
+
+# XGBoost model specification
+xgboost_model <- 
+  parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = tune(), ## then # of data points at a node before being split further
+    tree_depth = tune(),  ## max depth of a tree
+    learn_rate = tune(),  ## shrinkage parameter; step size
+    loss_reduction = tune()
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror", nthreads = parallel::detectCores()-1)
+
+
+# grid specification for tuning the hyper-parameters
+## first set-up the parameters to be tuned 
+xgboost_params <- 
+  dials::parameters(
+    min_n(),
+    tree_depth(),
+    learn_rate(),
+    loss_reduction()
+  )
+## then use the vector of parameters in the grid_max_entropy() call for parameter tuning
+xgboost_grid <- 
+  dials::grid_max_entropy(
+    xgboost_params, 
+    size = 30
+  )
+knitr::kable(head(xgboost_grid)) ## print out some of the grid values
+
+
+# define the workflow
+xgboost_wf <- 
+  workflows::workflow() %>%
+  add_model(xgboost_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+# set up the cross-validation folds
+cv_folds <- vfold_cv(train, v = 10)
+
+# hyper-parameter tuning via tune_grid()
+
+doParallel::registerDoParallel()
+set.seed(123)
+xgboost_tuned <- tune::tune_grid(
+  object = xgboost_wf,
+  resamples = cv_folds,
+  grid = xgboost_grid,
+  metrics = yardstick::metric_set(rmse), ## can use mae and rsq
+  control = tune::control_grid(verbose = TRUE)
+)
+
+# isolate the best performing model parameters
+xgboost_best_params <- xgboost_tuned %>%
+  tune::select_best("rmse")
+knitr::kable(xgboost_best_params)
+```
+
+
+## HYPER-PARAMETER TUNING FOR OBSERVED DATA ANALYSIS
+
+## Case 1 [n = 500 and SD = 1]
+
+```{r}
+
+## data
+train1 <- s_twoa %>% dplyr::select(y, A, x1, x2, x3, x4, R)
+train = train1[, -7]
+
+# XGBoost model specification
+xgboost_model <- 
+  parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = tune(), ## then # of data points at a node before being split further
+    tree_depth = tune(),  ## max depth of a tree
+    learn_rate = tune(),  ## shrinkage parameter; step size
+    loss_reduction = tune()#,  ## ctrls model complexity
+    #mtry = tune(),  ## predictors to be randomly sampled at a node
+    #sample_size = tune(),  ## randomness; prop sampled for training
+    #stop_iter = tune()  ## # of iterations without improvement before stopping
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror", nthreads = parallel::detectCores()-1)
+
+
+# grid specification for tuning the hyper-parameters
+## first set-up the parameters to be tuned 
+xgboost_params <- 
+  dials::parameters(
+    min_n(),
+    tree_depth(),
+    learn_rate(),
+    loss_reduction()
+  )
+## then use the vector of parameters in the grid_max_entropy() call for parameter tuning
+xgboost_grid <- 
+  dials::grid_max_entropy(
+    xgboost_params, 
+    size = 30
+  )
+knitr::kable(head(xgboost_grid)) ## print out some of the grid values
+
+
+# define the workflow
+xgboost_wf <- 
+  workflows::workflow() %>%
+  add_model(xgboost_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+# set up the cross-validation folds
+cv_folds <- vfold_cv(train, v = 10)
+
+# hyper-parameter tuning via tune_grid()
+
+doParallel::registerDoParallel()
+set.seed(123)
+xgboost_tuned <- tune::tune_grid(
+  object = xgboost_wf,
+  resamples = cv_folds,
+  grid = xgboost_grid,
+  metrics = yardstick::metric_set(rmse), ## can use mae and rsq
+  control = tune::control_grid(verbose = TRUE)
+)
+
+# isolate the best performing model parameters
+xgboost_best_params <- xgboost_tuned %>%
+  tune::select_best("rmse")
+knitr::kable(xgboost_best_params)
+```
+
+## Case 2 [n = 500, SD = 45]
+
+```{r}
+
+## data
+train1 <- s_twob %>% dplyr::select(y, A, x1, x2, x3, x4, R)
+train = train1[, -7]
+
+# XGBoost model specification
+xgboost_model <- 
+  parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = tune(), ## then # of data points at a node before being split further
+    tree_depth = tune(),  ## max depth of a tree
+    learn_rate = tune(),  ## shrinkage parameter; step size
+    loss_reduction = tune()  ## ctrls model complexity
+    
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror", nthreads = parallel::detectCores()-1)
+
+
+# grid specification for tuning the hyper-parameters
+## first set-up the parameters to be tuned 
+xgboost_params <- 
+  dials::parameters(
+    min_n(),
+    tree_depth(),
+    learn_rate(),
+    loss_reduction()
+  )
+## then use the vector of parameters in the grid_max_entropy() call for parameter tuning
+xgboost_grid <- 
+  dials::grid_max_entropy(
+    xgboost_params, 
+    size = 30
+  )
+knitr::kable(head(xgboost_grid)) ## print out some of the grid values
+
+
+# define the workflow
+xgboost_wf <- 
+  workflows::workflow() %>%
+  add_model(xgboost_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+# set up the cross-validation folds
+cv_folds <- vfold_cv(train, v = 10)
+
+# hyper-parameter tuning via tune_grid()
+
+doParallel::registerDoParallel()
+set.seed(123)
+xgboost_tuned <- tune::tune_grid(
+  object = xgboost_wf,
+  resamples = cv_folds,
+  grid = xgboost_grid,
+  metrics = yardstick::metric_set(yardstick::rmse), ## can use mae and rsq, rmse
+  control = tune::control_grid(verbose = TRUE)
+)
+
+# isolate the best performing model parameters
+xgboost_best_params <- xgboost_tuned %>%
+  tune::select_best("rmse")
+knitr::kable(xgboost_best_params)
+```
+
+
+## Case 3 [n = 2000, SD = 1]
+
+```{r}
+
+## data
+train1 <- s_twoc %>% dplyr::select(y, A, x1, x2, x3, x4, R)
+train = train1[, -7]
+# XGBoost model specification
+xgboost_model <- 
+  parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = tune(), ## then # of data points at a node before being split further
+    tree_depth = tune(),  ## max depth of a tree
+    learn_rate = tune(),  ## shrinkage parameter; step size
+    loss_reduction = tune()
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror", nthreads = parallel::detectCores()-1)
+
+
+# grid specification for tuning the hyper-parameters
+## first set-up the parameters to be tuned 
+xgboost_params <- 
+  dials::parameters(
+    min_n(),
+    tree_depth(),
+    learn_rate(),
+    loss_reduction()
+  )
+## then use the vector of parameters in the grid_max_entropy() call for parameter tuning
+xgboost_grid <- 
+  dials::grid_max_entropy(
+    xgboost_params, 
+    size = 30
+  )
+knitr::kable(head(xgboost_grid)) ## print out some of the grid values
+
+
+# define the workflow
+xgboost_wf <- 
+  workflows::workflow() %>%
+  add_model(xgboost_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+# set up the cross-validation folds
+cv_folds <- vfold_cv(train, v = 10)
+
+# hyper-parameter tuning via tune_grid()
+
+doParallel::registerDoParallel()
+set.seed(123)
+xgboost_tuned <- tune::tune_grid(
+  object = xgboost_wf,
+  resamples = cv_folds,
+  grid = xgboost_grid,
+  metrics = yardstick::metric_set(rmse), ## can use mae and rsq
+  control = tune::control_grid(verbose = TRUE)
+)
+
+# isolate the best performing model parameters
+xgboost_best_params <- xgboost_tuned %>%
+  tune::select_best("rmse")
+knitr::kable(xgboost_best_params)
+```
+
+## Case 4 [n = 2000, SD = 45]
+
+```{r}
+
+## data
+train1 <- s_twoa %>% dplyr::select(y, A, x1, x2, x3, x4, R)
+train = train1[, -7]
+
+# XGBoost model specification
+xgboost_model <- 
+  parsnip::boost_tree(
+    mode = "regression",
+    trees = 1000,
+    min_n = tune(), ## then # of data points at a node before being split further
+    tree_depth = tune(),  ## max depth of a tree
+    learn_rate = tune(),  ## shrinkage parameter; step size
+    loss_reduction = tune()
+  ) %>%
+    set_engine("xgboost", objective = "reg:squarederror", nthreads = parallel::detectCores()-1)
+
+
+# grid specification for tuning the hyper-parameters
+## first set-up the parameters to be tuned 
+xgboost_params <- 
+  dials::parameters(
+    min_n(),
+    tree_depth(),
+    learn_rate(),
+    loss_reduction()
+  )
+## then use the vector of parameters in the grid_max_entropy() call for parameter tuning
+xgboost_grid <- 
+  dials::grid_max_entropy(
+    xgboost_params, 
+    size = 30
+  )
+knitr::kable(head(xgboost_grid)) ## print out some of the grid values
+
+
+# define the workflow
+xgboost_wf <- 
+  workflows::workflow() %>%
+  add_model(xgboost_model) %>% 
+  add_formula(y ~ A + x1 + x2 + x3 + x4)
+
+# set up the cross-validation folds
+cv_folds <- vfold_cv(train, v = 10)
+
+# hyper-parameter tuning via tune_grid()
+
+doParallel::registerDoParallel()
+set.seed(123)
+xgboost_tuned <- tune::tune_grid(
+  object = xgboost_wf,
+  resamples = cv_folds,
+  grid = xgboost_grid,
+  metrics = yardstick::metric_set(rmse), ## can use mae and rsq
+  control = tune::control_grid(verbose = TRUE)
+)
+
+# isolate the best performing model parameters
+xgboost_best_params <- xgboost_tuned %>%
+  tune::select_best("rmse")
+knitr::kable(xgboost_best_params)
+```
+
+

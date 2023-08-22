@@ -1,0 +1,473 @@
+---
+title: "Informative Missing Data"
+subtitle: "Unadjusted Estimator"
+author: "Amos Okutse"
+date: "  `r format(Sys.time(), '%d %B, %Y')` "
+header-includes:
+- \usepackage{color, colortbl}  % for using table colors
+- \definecolor{Gray}{gray}{0.9}  %define the color to be used
+- \usepackage{multirow}
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{fvextra}
+- \usepackage{float}
+- \usepackage{wrapfig}
+- \usepackage{amsmath}
+- \usepackage{float}
+- \usepackage{graphicx}
+- \usepackage{microtype}
+- \usepackage{setspace}
+- \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
+- \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
+#- \onehalfspacing
+fontsize: 10pt
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    #keep_md: true
+link-citation: yes
+colorlinks: yes
+linkcolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	cache = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center',
+	fig.pos = 'H',
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr", "modelr")
+ipak(packages)
+```
+
+## Introduction
+
+- This data generation mechanism examines a more informative missing data mechanism and specifically, the role of covariate adjustment when the missing data is not only dependent on the adjustment covariates in a misspecified model but also on the treatment variable, and the effect modification of the treatment effect by a single adjustment covariate. 
+
+- We explore the effect of the omission of the treatment effect modifying covariate on the subsequent treatment effect estimates as well as missing data induced bias when the adjustment covariates are fairly to highly prognostic of the outcome under correct and incorrect model misspecifications. 
+
+- The outcome data generation mechanism is specified as $y = 210 + 50*A + \theta_1 * A*Z_1 + 27.4*Z_1 + 13.7*Z_2 + 13.7*Z_3 + 13.7*Z_4 + e$ whereas the missing data model is $R = \textrm{expit}(-Z_1 + \eta_0*A + \eta_1*A*Z_1 +0.5*Z_2 - 0.25*Z_3 - 0.1*Z_4)$. We generate the actual adjustment covariates under incorrect model specification as $x_1 = exp(Z_1/2),\: x_2 = Z_2/(1+exp(Z_1))+10, \: x_3 = (Z_1Z_3/25 + 0.6)^3,\: x_4 = (Z_2 + Z_4 + 20)^2$ assuming that these are the variables the analyst has access to.
+
+## Simulation settings
+
+- **Simulation setting 1** is a correctly specified model synonymous with the previous analysis scenarios where the adjustment model is linear and the adjustment covariates are the true outcome generating variables specified in the outcome model.
+
+(1) [Model 1] Given $\theta_1 = \eta_0 = \eta_1 = 0$ including $Z_1, \cdots, Z_4$ in adjustment model 1 is not supposed to result in substantial bias (no bias since we are adjusting for the true y generating covariates; also maximum precision when sd = 1 compared to sd = 45)
+
+(2) [Model 2] Dropping $Z_1$ in the adjustment model should result in a model misspecification which will not have a substantial effect given the above conditions do not induce a dependence of the $R$ and $y$ models on $Z_1$
+
+- **Simulation setting 2** has the conditions $\theta_1 = \eta_1 = 0$ whereas $\eta_0 = 1$. This setting induces a dependence of the missing data mechanism on the treatment variable, $A$. 
+
+(1) [Model 1] Including all the Z's in the adjustment model should not result in substantial biases (if any). 
+
+(2) [Model 2] Dropping the $Z$ in the adjustment model should result into some bias (higher bias compared to Model 1 given that adjustment does not consider treatment effect modification by the cvariate $Z_1$)
+
+- **Simulation setting 3** has the conditions $\theta_1 = 0, \: \eta_0 = 1, \: \eta_1 = -1$ alluding to the dependence of the missing data mechanism on the treatment, $A$ and the potential effect modification by variable $Z_1$.
+
+(1) [Model 1] should expect to see limited bias if any since adjustment is for true outcome generating variables.
+
+(2) [Model 2] should expect to see bias higher when residual sd is high since we do not consider the effect modification by $Z_1$ in the adjustment when we drop this variable from the adjustment model. 
+
+- When we adjust for a variable on which the missing data mechanism depends on, we should expect to see some gains in precision and reductions in bias. Gains should be higher when the proportion of variance explained by the adjustment covariates is higher.
+
+## Simulation setting 1
+
+- data generating models for this simulation setting are:
+
+**y-model** $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4 + \epsilon$
+
+**R-model** $R = \textrm{expit}(\alpha_1Z_1+\alpha_2Z_2+\alpha_3Z_3+\alpha_4Z_4)$
+
+- Adjustment model is correctly specified
+
+$y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4$
+
+```{r}
+## load the saved data sets for setting 1
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/one.RData")
+```
+
+#### Full and observed data analysis
+
+- Model 1 when the analysis is for everyone in the data set.
+
+```{r}
+## model one under full data analysis ~ linear regression function with correct specification of adjustment covariates
+model_onea <- function(df = NULL){
+  ## since this is based on the full data set, then use the full data set
+  full_unadjusted = mean(df$y[df$A == 1]) - mean(df$y[df$A == 0])
+  full_bias_unadjusted = full_unadjusted - 50
+  
+  ## subset the data to only subjects with R == 1
+  df2 <- dplyr::filter(df, R == 1)
+  observed_unadjusted = mean(df2$y[df2$A == 1]) - mean(df2$y[df2$A == 0])
+  observed_bias = observed_unadjusted - 50
+  return(data.frame(full_unadjusted, full_bias_unadjusted, observed_unadjusted, observed_bias))
+}
+```
+
+
+```{r}
+## apply the function under model one to each dataset in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  onea = parLapply(cl, s1a, model_onea)
+  oneb = parLapply(cl, s1b, model_onea)
+  onec = parLapply(cl, s1c, model_onea)
+  oned = parLapply(cl, s1d, model_onea)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+
+
+#### Results
+
+```{r}
+######################################
+## Simulation Setting One.           #
+######################################
+
+options(scipen = 999)
+##------------------------------------------------------------------------------
+## Case 1: n = 500, SD = 1
+##------------------------------------------------------------------------------
+## Full analysis
+full = c(n = nrow(s_onea), ate = mean(onea$full_unadjusted), sd = sd(onea$full_unadjusted), bias = mean(onea$full_bias_unadjusted), sd_bias = sd(onea$full_bias_unadjusted))
+full
+## observed
+obs = c(n = nrow(base::subset(s_onea, R == 1)), ate = mean(onea$observed_unadjusted), sd = sd(onea$observed_unadjusted), bias = mean(onea$observed_bias), sd_bias = sd(onea$observed_bias))
+obs
+
+##------------------------------------------------------------------------------
+## Case 2: n = 500, SD = 45
+##------------------------------------------------------------------------------
+## Full analysis
+full2 = c(n = nrow(s_oneb), ate = mean(oneb$full_unadjusted), sd = sd(oneb$full_unadjusted), bias = mean(oneb$full_bias_unadjusted), sd_bias = sd(oneb$full_bias_unadjusted))
+full2
+## observed
+obs2 = c(n = nrow(base::subset(s_oneb, R == 1)), ate = mean(oneb$observed_unadjusted), sd = sd(oneb$observed_unadjusted), bias = mean(oneb$observed_bias), sd_bias = sd(oneb$observed_bias))
+obs2
+
+##------------------------------------------------------------------------------
+## Case 3: n = 2000, SD = 1
+##------------------------------------------------------------------------------
+
+full3 = c(n = nrow(s_onec), ate = mean(onec$full_unadjusted), sd = sd(onec$full_unadjusted), bias = mean(onec$full_bias_unadjusted), sd_bias = sd(onec$full_bias_unadjusted))
+full3
+## observed
+obs3 = c(n = nrow(base::subset(s_onec, R == 1)), ate = mean(onec$observed_unadjusted), sd = sd(onec$observed_unadjusted), bias = mean(onec$observed_bias), sd_bias = sd(onec$observed_bias))
+obs3
+
+
+##------------------------------------------------------------------------------
+## Case 4: n = 2000, SD = 45
+##------------------------------------------------------------------------------
+
+full4 = c(n = nrow(s_oned), ate = mean(oned$full_unadjusted), sd = sd(oned$full_unadjusted), bias = mean(oned$full_bias_unadjusted), sd_bias = sd(oned$full_bias_unadjusted))
+full4
+## observed
+obs4 = c(n = nrow(base::subset(s_oned, R == 1)), ate = mean(oned$observed_unadjusted), sd = sd(oned$observed_unadjusted), bias = mean(oned$observed_bias), sd_bias = sd(oned$observed_bias))
+obs4
+
+##------------------------------------------------------------------------------
+## create final table of results
+sim1_unadjusted = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, 
+                            "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs2, 
+                            "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs3, 
+                            "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs4), 
+                       .id = "Data generating values") 
+kable(sim1_unadjusted, format = "latex", caption = "Unadjusted estimates of the average treatment effect using the correct outcome model across n = 1000 datasets under full and observed data analysis")
+
+
+## the order of the rows starts with n = 500 
+write.csv(sim1_unadjusted, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/Unadjusted/sim1_unadjusted.csv", row.names = FALSE)
+```
+
+
+
+
+## Simulation setting 2
+
+- data generating models for this simulation setting are:
+
+**y-model** $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4 + \epsilon$
+
+**R-model** $R = \textrm{expit}(\eta_0A+ \alpha_1Z_1+\alpha_2Z_2+\alpha_3Z_3+\alpha_4Z_4)$
+
+```{r}
+## clear the work space and load the data for the second simulation setting
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/two.RData")
+```
+
+- the adjustment model is correctly specified
+
+- $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4$
+
+#### Full and observed data analysis
+
+- Model 1 when the analysis is for everyone in the data set.
+
+```{r}
+## model one under full data analysis ~ linear regression function with correct specification of adjustment covariates
+model_onea <- function(df = NULL){
+  ## since this is based on the full data set, then use the full data set
+  full_unadjusted = mean(df$y[df$A == 1]) - mean(df$y[df$A == 0])
+  full_bias_unadjusted = full_unadjusted - 50
+  
+  ## subset the data to only subjects with R == 1
+  df2 <- dplyr::filter(df, R == 1)
+  observed_unadjusted = mean(df2$y[df2$A == 1]) - mean(df2$y[df2$A == 0])
+  observed_bias = observed_unadjusted - 50
+  return(data.frame(full_unadjusted, full_bias_unadjusted, observed_unadjusted, observed_bias))
+}
+```
+
+
+```{r}
+## apply the function under model one to each dataset in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  onea = parLapply(cl, s2a, model_onea)
+  oneb = parLapply(cl, s2b, model_onea)
+  onec = parLapply(cl, s2c, model_onea)
+  oned = parLapply(cl, s2d, model_onea)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+
+#### Results
+
+```{r}
+######################################
+## Simulation Setting Two.           #
+######################################
+
+options(scipen = 999)
+##------------------------------------------------------------------------------
+## Case 1: n = 500, SD = 1
+##------------------------------------------------------------------------------
+## Full analysis
+full = c(n = nrow(s_twoa), ate = mean(onea$full_unadjusted), sd = sd(onea$full_unadjusted), bias = mean(onea$full_bias_unadjusted), sd_bias = sd(onea$full_bias_unadjusted))
+full
+## observed
+obs = c(n = nrow(base::subset(s_twoa, R == 1)), ate = mean(onea$observed_unadjusted), sd = sd(onea$observed_unadjusted), bias = mean(onea$observed_bias), sd_bias = sd(onea$observed_bias))
+obs
+
+##------------------------------------------------------------------------------
+## Case 2: n = 500, SD = 45
+##------------------------------------------------------------------------------
+## Full analysis
+full2 = c(n = nrow(s_twob), ate = mean(oneb$full_unadjusted), sd = sd(oneb$full_unadjusted), bias = mean(oneb$full_bias_unadjusted), sd_bias = sd(oneb$full_bias_unadjusted))
+full2
+## observed
+obs2 = c(n = nrow(base::subset(s_twob, R == 1)), ate = mean(oneb$observed_unadjusted), sd = sd(oneb$observed_unadjusted), bias = mean(oneb$observed_bias), sd_bias = sd(oneb$observed_bias))
+obs2
+
+##------------------------------------------------------------------------------
+## Case 3: n = 2000, SD = 1
+##------------------------------------------------------------------------------
+
+full3 = c(n = nrow(s_twoc), ate = mean(onec$full_unadjusted), sd = sd(onec$full_unadjusted), bias = mean(onec$full_bias_unadjusted), sd_bias = sd(onec$full_bias_unadjusted))
+full3
+## observed
+obs3 = c(n = nrow(base::subset(s_twoc, R == 1)), ate = mean(onec$observed_unadjusted), sd = sd(onec$observed_unadjusted), bias = mean(onec$observed_bias), sd_bias = sd(onec$observed_bias))
+obs3
+
+
+##------------------------------------------------------------------------------
+## Case 4: n = 2000, SD = 45
+##------------------------------------------------------------------------------
+
+full4 = c(n = nrow(s_twod), ate = mean(oned$full_unadjusted), sd = sd(oned$full_unadjusted), bias = mean(oned$full_bias_unadjusted), sd_bias = sd(oned$full_bias_unadjusted))
+full4
+## observed
+obs4 = c(n = nrow(base::subset(s_twod, R == 1)), ate = mean(oned$observed_unadjusted), sd = sd(oned$observed_unadjusted), bias = mean(oned$observed_bias), sd_bias = sd(oned$observed_bias))
+obs4
+
+##------------------------------------------------------------------------------
+## create final table of results
+sim2_unadjusted = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, 
+                            "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs2, 
+                            "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs3, 
+                            "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs4), 
+                       .id = "Data generating values") 
+kable(sim2_unadjusted, format = "latex", caption = "Unadjusted estimates of the average treatment effect using the correct outcome model across n = 1000 datasets under full and observed data analysis")
+
+
+## the order of the rows starts with n = 500 
+write.csv(sim2_unadjusted, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/Unadjusted/sim2_unadjusted.csv", row.names = FALSE)
+```
+
+
+
+
+## Simulation setting 3
+
+- data generating models for this simulation setting are:
+
+**y-model** $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4 + \epsilon$
+
+**R-model** $R = \textrm{expit}(\eta_0A + \eta_1A*Z_1+ \alpha_1Z_1+\alpha_2Z_2+\alpha_3Z_3+\alpha_4Z_4)$
+
+```{r}
+## clean up the workspace for simulation setting three
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/three.RData")
+```
+
+
+- Adjustment model $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4$
+
+#### Full and observed data analysis
+
+- Model 1 when the analysis is for everyone in the data set.
+
+```{r}
+## model one under full data analysis ~ linear regression function with correct specification of adjustment covariates
+model_onea <- function(df = NULL){
+  ## since this is based on the full data set, then use the full data set
+  full_unadjusted = mean(df$y[df$A == 1]) - mean(df$y[df$A == 0])
+  full_bias_unadjusted = full_unadjusted - 50
+  
+  ## subset the data to only subjects with R == 1
+  df2 <- dplyr::filter(df, R == 1)
+  observed_unadjusted = mean(df2$y[df2$A == 1]) - mean(df2$y[df2$A == 0])
+  observed_bias = observed_unadjusted - 50
+  return(data.frame(full_unadjusted, full_bias_unadjusted, observed_unadjusted, observed_bias))
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  onea = parLapply(cl, s3a, model_onea)
+  oneb = parLapply(cl, s3b, model_onea)
+  onec = parLapply(cl, s3c, model_onea)
+  oned = parLapply(cl, s3d, model_onea)
+stopCluster(cl)
+```
+
+```{r}
+## convert the estimates to a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+
+#### Results
+
+```{r}
+######################################
+## Simulation Setting Three.         #
+######################################
+
+options(scipen = 999)
+##------------------------------------------------------------------------------
+## Case 1: n = 500, SD = 1
+##------------------------------------------------------------------------------
+## Full analysis
+full = c(n = nrow(s_threea), ate = mean(onea$full_unadjusted), sd = sd(onea$full_unadjusted), bias = mean(onea$full_bias_unadjusted), sd_bias = sd(onea$full_bias_unadjusted))
+full
+## observed
+obs = c(n = nrow(base::subset(s_threea, R == 1)), ate = mean(onea$observed_unadjusted), sd = sd(onea$observed_unadjusted), bias = mean(onea$observed_bias), sd_bias = sd(onea$observed_bias))
+obs
+
+##------------------------------------------------------------------------------
+## Case 2: n = 500, SD = 45
+##------------------------------------------------------------------------------
+## Full analysis
+full2 = c(n = nrow(s_threeb), ate = mean(oneb$full_unadjusted), sd = sd(oneb$full_unadjusted), bias = mean(oneb$full_bias_unadjusted), sd_bias = sd(oneb$full_bias_unadjusted))
+full2
+## observed
+obs2 = c(n = nrow(base::subset(s_threeb, R == 1)), ate = mean(oneb$observed_unadjusted), sd = sd(oneb$observed_unadjusted), bias = mean(oneb$observed_bias), sd_bias = sd(oneb$observed_bias))
+obs2
+
+##------------------------------------------------------------------------------
+## Case 3: n = 2000, SD = 1
+##------------------------------------------------------------------------------
+
+full3 = c(n = nrow(s_threec), ate = mean(onec$full_unadjusted), sd = sd(onec$full_unadjusted), bias = mean(onec$full_bias_unadjusted), sd_bias = sd(onec$full_bias_unadjusted))
+full3
+## observed
+obs3 = c(n = nrow(base::subset(s_threec, R == 1)), ate = mean(onec$observed_unadjusted), sd = sd(onec$observed_unadjusted), bias = mean(onec$observed_bias), sd_bias = sd(onec$observed_bias))
+obs3
+
+
+##------------------------------------------------------------------------------
+## Case 4: n = 2000, SD = 45
+##------------------------------------------------------------------------------
+
+full4 = c(n = nrow(s_threed), ate = mean(oned$full_unadjusted), sd = sd(oned$full_unadjusted), bias = mean(oned$full_bias_unadjusted), sd_bias = sd(oned$full_bias_unadjusted))
+full4
+## observed
+obs4 = c(n = nrow(base::subset(s_threed, R == 1)), ate = mean(oned$observed_unadjusted), sd = sd(oned$observed_unadjusted), bias = mean(oned$observed_bias), sd_bias = sd(oned$observed_bias))
+obs4
+
+##------------------------------------------------------------------------------
+## create final table of results
+sim3_unadjusted = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, 
+                            "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs2, 
+                            "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs3, 
+                            "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs4), 
+                       .id = "Data generating values") 
+kable(sim3_unadjusted, format = "latex", caption = "Unadjusted estimates of the average treatment effect using the correct outcome model across n = 1000 datasets under full and observed data analysis")
+
+
+## the order of the rows starts with n = 500 
+write.csv(sim3_unadjusted, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/Unadjusted/sim3_unadjusted.csv", row.names = FALSE)
+```

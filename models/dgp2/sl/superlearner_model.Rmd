@@ -1,0 +1,1702 @@
+---
+title: "Informative Missing Data"
+subtitle: "Superlearner Model under model misspecification"
+author: "Amos Okutse"
+date: "  `r format(Sys.time(), '%d %B, %Y')` "
+header-includes:
+- \usepackage{color, colortbl}  % for using table colors
+- \definecolor{Gray}{gray}{0.9}  %define the color to be used
+- \usepackage{multirow}
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{fvextra}
+- \usepackage{float}
+- \usepackage{wrapfig}
+- \usepackage{amsmath}
+- \usepackage{float}
+- \usepackage{graphicx}
+- \usepackage{microtype}
+- \usepackage{setspace}
+- \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
+- \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
+#- \onehalfspacing
+fontsize: 10pt
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    #keep_md: true
+link-citation: yes
+colorlinks: yes
+linkcolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	fig.align = "center",
+	fig.pos = "H",
+	message = FALSE,
+	warning = FALSE,
+	cache = FALSE,
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr", "caret", "SuperLearner", "bartMachine", "xgboost", "rJava")
+ipak(packages)
+```
+
+
+## Introduction
+
+- This data generation mechanism examines a more informative missing data mechanism and specifically, the role of covariate adjustment when the missing data is not only dependent on the adjustment covariates in a misspecified model but also on the treatment variable, and the effect modification of the treatment effect by a single adjustment covariate. 
+
+- We explore the effect of the omission of the treatment effect modifying covariate on the subsequent treatment effect estimates as well as missing data induced bias when the adjustment covariates are fairly to highly prognostic of the outcome under correct and incorrect model misspecifications. 
+
+- The outcome data generation mechanism is specified as $y = 210 + 50*A + \theta_1 * A*Z_1 + 27.4*Z_1 + 13.7*Z_2 + 13.7*Z_3 + 13.7*Z_4 + e$ whereas the missing data model is $R = \textrm{expit}(-Z_1 + \eta_0*A + \eta_1*A*Z_1 +0.5*Z_2 - 0.25*Z_3 - 0.1*Z_4)$. We generate the actual adjustment covariates under incorrect model specification as $x_1 = exp(Z_1/2),\: x_2 = Z_2/(1+exp(Z_1))+10, \: x_3 = (Z_1Z_3/25 + 0.6)^3,\: x_4 = (Z_2 + Z_4 + 20)^2$ assuming that these are the variables the analyst has access to.
+
+## Simulation settings
+
+- **Simulation setting 1** is a correctly specified model synonymous with the previous analysis scenarios where the adjustment model is linear and the adjustment covariates are the true outcome generating variables specified in the outcome model.
+
+(1) [Model 1] Given $\theta_1 = \eta_0 = \eta_1 = 0$ including $Z_1, \cdots, Z_4$ in adjustment model 1 is not supposed to result in substantial bias (no bias since we are adjusting for the true y generating covariates; also maximum precision when sd = 1 compared to sd = 45)
+
+(2) [Model 2] Dropping $Z_1$ in the adjustment model should result in a model misspecification which will not have a substantial effect given the above conditions do not induce a dependence of the $R$ and $y$ models on $Z_1$
+
+- **Simulation setting 2** has the conditions $\theta_1 = \eta_1 = 0$ whereas $\eta_0 = 1$. This setting induces a dependence of the missing data mechanism on the treatment variable, $A$. 
+
+(1) [Model 1] Including all the Z's in the adjustment model should not result in substantial biases (if any). 
+
+(2) [Model 2] Dropping the $Z$ in the adjustment model should result into some bias (higher bias compared to Model 1 given that adjustment does not consider treatment effect modification by the cvariate $Z_1$)
+
+- **Simulation setting 3** has the conditions $\theta_1 = 0, \: \eta_0 = 1, \: \eta_1 = -1$ alluding to the dependence of the missing data mechanism on the treatment, $A$ and the potential effect modification by variable $Z_1$.
+
+(1) [Model 1] should expect to see limited bias if any since adjustment is for true outcome generating variables.
+
+(2) [Model 2] should expect to see bias higher when residual sd is high since we do not consider the effect modification by $Z_1$ in the adjustment when we drop this variable from the adjustment model. 
+
+- When we adjust for a variable on which the missing data mechanism depends on, we should expect to see some gains in precision and reductions in bias. Gains should be higher when the proportion of variance explained by the adjustment covariates is higher.
+
+## Simulation setting 1
+
+- data generating models for this simulation setting are:
+
+**y-model** $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4 + \epsilon$
+
+**R-model** $R = \textrm{expit}(\alpha_1Z_1+\alpha_2Z_2+\alpha_3Z_3+\alpha_4Z_4)$
+
+### Model 1:
+
+- Adjustment model is correctly specified
+
+$y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4$
+
+```{r}
+## load the saved data sets for setting 1
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/one.RData")
+```
+
+#### Full data analysis
+
+- Model 1 when the analysis is for everyone in the data set.
+
+```{r}
+## model one under full data analysis ~ fully specified incorrect superlearner adjustment model
+model_onea <- function(df = NULL, cl = cl){
+  
+  allx <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    method = "method.NNLS",
+    cluster = cl)
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = allx, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = allx, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+vv = clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+onea = lapply(s1a, model_onea, cl)
+oneb = lapply(s1b, model_onea, cl)
+onec = lapply(s1c, model_onea, cl)
+oned = lapply(s1d, model_onea, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 1 when analysis is restricted to only observed data and predictions proceed similarly.
+
+```{r}
+## observed modified with fully specified incorrect superlearner models
+model_oneb <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals
+  df <- base::subset(df, R == 1)
+  two <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = two, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = two, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+oneaa = lapply(s1a, model_oneb, cl)
+onebb = lapply(s1b, model_oneb, cl)
+onecc = lapply(s1c, model_oneb, cl)
+onedd = lapply(s1d, model_oneb, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaa <- oneaa %>% map_dfr(data.frame)
+  onebb <- onebb %>% map_dfr(data.frame)
+  onecc <- onecc %>% map_dfr(data.frame)
+  onedd <- onedd %>% map_dfr(data.frame)
+```
+
+
+
+#### Observed modified data analysis
+
+- Model 1 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations.
+
+```{r}
+## observed modified analysis under model 1: fully  specified incorrect super learner adjustment model
+model_onec <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals and use to fit all the SuperLearner models
+  df_one <- subset(df, R == 1)
+  three <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df_one[, 1]),
+    X = data.frame(df_one[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = three, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = three, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+oneaaa = lapply(s1a, model_onec, cl)
+onebbb = lapply(s1b, model_onec, cl)
+oneccc = lapply(s1c, model_onec, cl)
+oneddd = lapply(s1d, model_onec, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaaa <- oneaaa %>% map_dfr(data.frame)
+  onebbb <- onebbb %>% map_dfr(data.frame)
+  oneccc <- oneccc %>% map_dfr(data.frame)
+  oneddd <- oneddd %>% map_dfr(data.frame)
+```
+
+
+#### Model 1 Results
+
+```{r}
+######################################
+## Simulation Setting One: Model One #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_onea), ate = mean(onea$ATE_adjusted), sd = sd(onea$ATE_adjusted), bias = mean(onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_onea, R == 1)), ate = mean(oneaa$ATE_adjusted), sd = sd(oneaa$ATE_adjusted), bias = mean(oneaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_onea, R == 1)), ate = mean(oneaaa$ATE_adjusted), sd = sd(oneaaa$ATE_adjusted), bias = mean(oneaaa$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_oneb), ate = mean(oneb$ATE_adjusted), sd = sd(oneb$ATE_adjusted), bias = mean(oneb$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_oneb, R == 1)), ate = mean(onebb$ATE_adjusted), sd = sd(onebb$ATE_adjusted), bias = mean(onebb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_oneb, R == 1)), ate = mean(onebbb$ATE_adjusted), sd = sd(onebbb$ATE_adjusted), bias = mean(onebbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_onec), ate = mean(onec$ATE_adjusted), sd = sd(onec$ATE_adjusted), bias = mean(onec$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_onec, R == 1)), ate = mean(onecc$ATE_adjusted), sd = sd(onecc$ATE_adjusted), bias = mean(onecc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_onec, R == 1)), ate = mean(oneccc$ATE_adjusted), sd = sd(oneccc$ATE_adjusted), bias = mean(oneccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_oned), ate = mean(oned$ATE_adjusted), sd = sd(oned$ATE_adjusted), bias = mean(oned$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_oned, R == 1)), ate = mean(onedd$ATE_adjusted), sd = sd(onedd$ATE_adjusted), bias = mean(onedd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_oned, R == 1)), ate = mean(oneddd$ATE_adjusted), sd = sd(oneddd$ATE_adjusted), bias = mean(oneddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim1_model_one = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim1_model_one, format = "pipe", caption = "Fully specified incorrect superlearner adjustment model results averaged across n = 1000 datasets [Model One]")
+
+## save file on disk
+write.csv(sim1_model_one, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/superlearner2/superlearner_sim1_model_one.csv", row.names = FALSE)
+```
+
+
+
+
+### Model 2:
+
+- Adjustment model excludes variable $Z_1$
+
+$y = \beta_0 + \theta_0 A + \beta_1 X_1 + \beta_2X_2 + \beta_3X_3 + \beta_4 X_4$
+
+#### Full data analysis
+
+```{r}
+## model two under full data analysis ~ grossly misspecified BART model on full data [excludes x1]
+model_twoa <- function(df = NULL, cl = cl){
+  all <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    method = "method.NNLS",
+    cluster = cl)
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = all, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = all, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+twoa = lapply(s1a, model_twoa, cl)
+twob = lapply(s1b, model_twoa, cl)
+twoc = lapply(s1c, model_twoa, cl)
+twod = lapply(s1d, model_twoa, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoa <- twoa %>% map_dfr(data.frame)
+  twob <- twob %>% map_dfr(data.frame)
+  twoc <- twoc %>% map_dfr(data.frame)
+  twod <- twod %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 2 when analysis is restricted to only observed data and predictions proceed similarly and the adjustment model excludes $X_1$.
+
+```{r}
+# model 2 under simulation setting one where adjustment model excludes x1
+model_twob <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals
+  df <- base::subset(df, R == 1)
+  two <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = two, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = two, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+twoaa = lapply(s1a, model_twob, cl)
+twobb = lapply(s1b, model_twob, cl)
+twocc = lapply(s1c, model_twob, cl)
+twodd = lapply(s1d, model_twob, cl)
+stopCluster(cl)
+```
+
+```{r}
+## convert the estimates to a data frame
+  twoaa <- twoaa %>% map_dfr(data.frame)
+  twobb <- twobb %>% map_dfr(data.frame)
+  twocc <- twocc %>% map_dfr(data.frame)
+  twodd <- twodd %>% map_dfr(data.frame)
+```
+
+
+#### Observed modified analysis
+
+- Model 2 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations and the adjustment model does not include $X_1$.
+
+```{r}
+## observed modified analysis under model 1
+model_twoc <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals and use to fit all the SuperLearner models
+  df_one <- subset(df, R == 1)
+  three <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df_one[, 1]),
+    X = data.frame(df_one[, c(2, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = three, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = three, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  twoaaa = lapply(s1a, model_twoc, cl)
+  twobbb = lapply(s1b, model_twoc, cl)
+  twoccc = lapply(s1c, model_twoc, cl)
+  twoddd = lapply(s1d, model_twoc, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoaaa <- twoaaa %>% map_dfr(data.frame)
+  twobbb <- twobbb %>% map_dfr(data.frame)
+  twoccc <- twoccc %>% map_dfr(data.frame)
+  twoddd <- twoddd %>% map_dfr(data.frame)
+```
+
+#### Model 2 Results
+
+```{r}
+######################################
+## Simulation Setting One: Model Two #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_onea), ate = mean(twoa$ATE_adjusted), sd = sd(twoa$ATE_adjusted), bias = mean(twoa$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_onea, R == 1)), ate = mean(twoaa$ATE_adjusted), sd = sd(twoaa$ATE_adjusted), bias = mean(twoaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_onea, R == 1)), ate = mean(twoaaa$ATE_adjusted), sd = sd(twoaaa$ATE_adjusted), bias = mean(twoaaa$bias_adjusted))
+obs_m
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_oneb), ate = mean(twob$ATE_adjusted), sd = sd(twob$ATE_adjusted), bias = mean(twob$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_oneb, R == 1)), ate = mean(twobb$ATE_adjusted), sd = sd(twobb$ATE_adjusted), bias = mean(twobb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_oneb, R == 1)), ate = mean(twobbb$ATE_adjusted), sd = sd(twobbb$ATE_adjusted), bias = mean(twobbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_onec), ate = mean(twoc$ATE_adjusted), sd = sd(twoc$ATE_adjusted), bias = mean(twoc$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_onec, R == 1)), ate = mean(twocc$ATE_adjusted), sd = sd(twocc$ATE_adjusted), bias = mean(twocc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_onec, R == 1)), ate = mean(twoccc$ATE_adjusted), sd = sd(twoccc$ATE_adjusted), bias = mean(twoccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_oned), ate = mean(twod$ATE_adjusted), sd = sd(twod$ATE_adjusted), bias = mean(twod$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_oned, R == 1)), ate = mean(twodd$ATE_adjusted), sd = sd(twodd$ATE_adjusted), bias = mean(twodd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_oned, R == 1)), ate = mean(twoddd$ATE_adjusted), sd = sd(twoddd$ATE_adjusted), bias = mean(twoddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim1_model_two = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim1_model_two, format = "pipe", caption = "Grossly misspecified superlearner model results averaged across n = 1000 datasets [Simulation 1 Model Two]")
+
+## write simulation 1 model 2 results to table
+write.csv(sim1_model_two, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/superlearner2/superlearner_sim1_model_two.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+## Simulation setting 2
+
+- data generating models for this simulation setting are:
+
+**y-model** $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4 + \epsilon$
+
+**R-model** $R = \textrm{expit}(\eta_0A+ \alpha_1Z_1+\alpha_2Z_2+\alpha_3Z_3+\alpha_4Z_4)$
+
+```{r}
+## clear the work space and load the data for the second simulation setting
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/two.RData")
+```
+
+### Model 1
+
+- the adjustment model is correctly specified
+
+- $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4$
+
+#### Full data analysis
+
+- Model 1 when the analysis is for everyone in the data set.
+
+```{r}
+## model one under full data analysis ~ fully specified incorrect superlearner adjustment model
+model_onea <- function(df = NULL, cl = cl){
+  all <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    method = "method.NNLS",
+    cluster = cl)
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = all, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = all, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each dataset in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+  onea = lapply(s2a, model_onea, cl)
+  oneb = lapply(s2b, model_onea, cl)
+  onec = lapply(s2c, model_onea, cl)
+  oned = lapply(s2d, model_onea, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 1 when analysis is restricted to only observed data and predictions proceed similarly.
+
+```{r}
+## model one under full data analysis 
+model_oneb <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals
+  df <- base::subset(df, R == 1)
+  two <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = two, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = two, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  oneaa = lapply(s2a, model_oneb, cl)
+  onebb = lapply(s2b, model_oneb, cl)
+  onecc = lapply(s2c, model_oneb, cl)
+  onedd = lapply(s2d, model_oneb, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaa <- oneaa %>% map_dfr(data.frame)
+  onebb <- onebb %>% map_dfr(data.frame)
+  onecc <- onecc %>% map_dfr(data.frame)
+  onedd <- onedd %>% map_dfr(data.frame)
+```
+
+
+
+#### Observed modified data analysis
+
+- Model 1 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations.
+
+```{r}
+## observed modified analysis under model 1
+model_onec <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals and use to fit all the SuperLearner models
+  df_one <- subset(df, R == 1)
+  three <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df_one[, 1]),
+    X = data.frame(df_one[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = three, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = three, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  oneaaa = lapply(s2a, model_onec, cl)
+  onebbb = lapply(s2b, model_onec, cl)
+  oneccc = lapply(s2c, model_onec, cl)
+  oneddd = lapply(s2d, model_onec, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaaa <- oneaaa %>% map_dfr(data.frame)
+  onebbb <- onebbb %>% map_dfr(data.frame)
+  oneccc <- oneccc %>% map_dfr(data.frame)
+  oneddd <- oneddd %>% map_dfr(data.frame)
+```
+
+
+#### Model 1 Results
+
+```{r}
+######################################
+## Simulation Setting Two: Model one #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_twoa), ate = mean(onea$ATE_adjusted), sd = sd(onea$ATE_adjusted), bias = mean(onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_twoa, R == 1)), ate = mean(oneaa$ATE_adjusted), sd = sd(oneaa$ATE_adjusted), bias = mean(oneaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_twoa, R == 1)), ate = mean(oneaaa$ATE_adjusted), sd = sd(oneaaa$ATE_adjusted), bias = mean(oneaaa$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_twob), ate = mean(oneb$ATE_adjusted), sd = sd(oneb$ATE_adjusted), bias = mean(oneb$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_twob, R == 1)), ate = mean(onebb$ATE_adjusted), sd = sd(onebb$ATE_adjusted), bias = mean(onebb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_twob, R == 1)), ate = mean(onebbb$ATE_adjusted), sd = sd(onebbb$ATE_adjusted), bias = mean(onebbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_twoc), ate = mean(onec$ATE_adjusted), sd = sd(onec$ATE_adjusted), bias = mean(onec$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_twoc, R == 1)), ate = mean(onecc$ATE_adjusted), sd = sd(onecc$ATE_adjusted), bias = mean(onecc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_twoc, R == 1)), ate = mean(oneccc$ATE_adjusted), sd = sd(oneccc$ATE_adjusted), bias = mean(oneccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_twod), ate = mean(oned$ATE_adjusted), sd = sd(oned$ATE_adjusted), bias = mean(oned$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_twod, R == 1)), ate = mean(onedd$ATE_adjusted), sd = sd(onedd$ATE_adjusted), bias = mean(onedd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_twod, R == 1)), ate = mean(oneddd$ATE_adjusted), sd = sd(oneddd$ATE_adjusted), bias = mean(oneddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim2_model_one = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim2_model_one, format = "pipe", caption = "Fully specified incorrect adjustment Superlearner model averaged across n = 1000 datasets [Simulation 2 Model one]")
+
+## save file on disk
+write.csv(sim2_model_one, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/superlearner2/superlearner_sim2_model_one.csv", row.names = FALSE)
+```
+
+
+
+
+
+### Model 2
+
+- $y = \beta_0 + \theta_0 A + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4$
+
+#### Full data analysis
+
+```{r}
+## model two under full data analysis grossly misspecified superlearner model [excludes z1]
+model_twoa <- function(df = NULL, cl = cl){
+  all <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    method = "method.NNLS",
+    cluster = cl)
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = all, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = all, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  twoa = lapply(s2a, model_twoa, cl)
+  twob = lapply(s2b, model_twoa, cl)
+  twoc = lapply(s2c, model_twoa, cl)
+  twod = lapply(s2d, model_twoa, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoa <- twoa %>% map_dfr(data.frame)
+  twob <- twob %>% map_dfr(data.frame)
+  twoc <- twoc %>% map_dfr(data.frame)
+  twod <- twod %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 2 when analysis is restricted to only observed data and predictions proceed similarly and the adjustment model excludes $X_1$.
+
+```{r}
+# model 2 under simulation setting one where adjustment model excludes z1
+model_twob <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals
+  df <- base::subset(df, R == 1)
+  two <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = two, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = two, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  twoaa = lapply(s2a, model_twob, cl)
+  twobb = lapply(s2b, model_twob, cl)
+  twocc = lapply(s2c, model_twob, cl)
+  twodd = lapply(s2d, model_twob, cl)
+stopCluster(cl)
+```
+
+```{r}
+## convert the estimates to a data frame
+  twoaa <- twoaa %>% map_dfr(data.frame)
+  twobb <- twobb %>% map_dfr(data.frame)
+  twocc <- twocc %>% map_dfr(data.frame)
+  twodd <- twodd %>% map_dfr(data.frame)
+```
+
+
+#### Observed modified analysis
+
+- Model 2 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations and the adjustment model does not include $X_1$.
+
+```{r}
+## observed modified analysis under model 1
+model_twoc <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals and use to fit all the SuperLearner models
+  df_one <- subset(df, R == 1)
+  three <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df_one[, 1]),
+    X = data.frame(df_one[, c(2, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = three, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = three, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  twoaaa = lapply(s2a, model_twoc, cl)
+  twobbb = lapply(s2b, model_twoc, cl)
+  twoccc = lapply(s2c, model_twoc, cl)
+  twoddd = lapply(s2d, model_twoc, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoaaa <- twoaaa %>% map_dfr(data.frame)
+  twobbb <- twobbb %>% map_dfr(data.frame)
+  twoccc <- twoccc %>% map_dfr(data.frame)
+  twoddd <- twoddd %>% map_dfr(data.frame)
+```
+
+#### Model 2 Results
+
+```{r}
+######################################
+## Simulation Setting Two: Model Two #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_twoa), ate = mean(twoa$ATE_adjusted), sd = sd(twoa$ATE_adjusted), bias = mean(twoa$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_twoa, R == 1)), ate = mean(twoaa$ATE_adjusted), sd = sd(twoaa$ATE_adjusted), bias = mean(twoaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_twoa, R == 1)), ate = mean(twoaaa$ATE_adjusted), sd = sd(twoaaa$ATE_adjusted), bias = mean(twoaaa$bias_adjusted))
+obs_m
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_twob), ate = mean(twob$ATE_adjusted), sd = sd(twob$ATE_adjusted), bias = mean(twob$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_twob, R == 1)), ate = mean(twobb$ATE_adjusted), sd = sd(twobb$ATE_adjusted), bias = mean(twobb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_twob, R == 1)), ate = mean(twobbb$ATE_adjusted), sd = sd(twobbb$ATE_adjusted), bias = mean(twobbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_twoc), ate = mean(twoc$ATE_adjusted), sd = sd(twoc$ATE_adjusted), bias = mean(twoc$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_twoc, R == 1)), ate = mean(twocc$ATE_adjusted), sd = sd(twocc$ATE_adjusted), bias = mean(twocc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_twoc, R == 1)), ate = mean(twoccc$ATE_adjusted), sd = sd(twoccc$ATE_adjusted), bias = mean(twoccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_twod), ate = mean(twod$ATE_adjusted), sd = sd(twod$ATE_adjusted), bias = mean(twod$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_twod, R == 1)), ate = mean(twodd$ATE_adjusted), sd = sd(twodd$ATE_adjusted), bias = mean(twodd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_twod, R == 1)), ate = mean(twoddd$ATE_adjusted), sd = sd(twoddd$ATE_adjusted), bias = mean(twoddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim2_model_two = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim2_model_two, format = "pipe", caption = "Grossly misspecified Superlearner model averaged across n = 1000 datasets [Simulation 2 Model Two]")
+
+
+## save simulation 2 model two results file on disk
+write.csv(sim2_model_two, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/superlearner2/superlearner_sim2_model_two.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+## Simulation setting 3
+
+- data generating models for this simulation setting are:
+
+**y-model** $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4 + \epsilon$
+
+**R-model** $R = \textrm{expit}(\eta_0A + \eta_1A*Z_1+ \alpha_1Z_1+\alpha_2Z_2+\alpha_3Z_3+\alpha_4Z_4)$
+
+```{r}
+## clean up the workspace for simulation setting three
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/three.RData")
+```
+
+### Model 1
+
+- Adjustment model $y = \beta_0 + \theta_0 A + \beta_1 Z_1 + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4$
+
+#### Full data analysis
+
+- Model 1 when the analysis is for everyone in the data set.
+
+```{r}
+## model one under full data analysis ~ BART model using observed covariates which are also wrongly classified specification of adjustment covariates
+model_onea <- function(df = NULL, cl = cl){
+  all <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    method = "method.NNLS",
+    cluster = cl)
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = all, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = all, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  onea = lapply(s3a, model_onea, cl)
+  oneb = lapply(s3b, model_onea, cl)
+  onec = lapply(s3c, model_onea, cl)
+  oned = lapply(s3d, model_onea, cl)
+stopCluster(cl)
+```
+
+```{r}
+## convert the estimates to a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 1 when analysis is restricted to only observed data and predictions proceed similarly.
+
+```{r}
+## model one under full data analysis 
+model_oneb <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals
+  df <- base::subset(df, R == 1)
+  two <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = two, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = two, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  oneaa = lapply(s3a, model_oneb, cl)
+  onebb = lapply(s3b, model_oneb, cl)
+  onecc = lapply(s3c, model_oneb, cl)
+  onedd = lapply(s3d, model_oneb, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaa <- oneaa %>% map_dfr(data.frame)
+  onebb <- onebb %>% map_dfr(data.frame)
+  onecc <- onecc %>% map_dfr(data.frame)
+  onedd <- onedd %>% map_dfr(data.frame)
+```
+
+
+
+#### Observed modified data analysis
+
+- Model 1 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations.
+
+```{r}
+## observed modified analysis under model 1
+model_onec <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals and use to fit all the SuperLearner models
+  df_one <- subset(df, R == 1)
+  three <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df_one[, 1]),
+    X = data.frame(df_one[, c(2, 3, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = three, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 3, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = three, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  oneaaa = lapply(s3a, model_onec, cl)
+  onebbb = lapply(s3b, model_onec, cl)
+  oneccc = lapply(s3c, model_onec, cl)
+  oneddd = lapply(s3d, model_onec, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaaa <- oneaaa %>% map_dfr(data.frame)
+  onebbb <- onebbb %>% map_dfr(data.frame)
+  oneccc <- oneccc %>% map_dfr(data.frame)
+  oneddd <- oneddd %>% map_dfr(data.frame)
+```
+
+
+#### Model 1 Results
+
+```{r}
+######################################
+## Simulation Setting Three: Model One #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_threea), ate = mean(onea$ATE_adjusted), sd = sd(onea$ATE_adjusted), bias = mean(onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_threea, R == 1)), ate = mean(oneaa$ATE_adjusted), sd = sd(oneaa$ATE_adjusted), bias = mean(oneaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_threea, R == 1)), ate = mean(oneaaa$ATE_adjusted), sd = sd(oneaaa$ATE_adjusted), bias = mean(oneaaa$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_threeb), ate = mean(oneb$ATE_adjusted), sd = sd(oneb$ATE_adjusted), bias = mean(oneb$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_threeb, R == 1)), ate = mean(onebb$ATE_adjusted), sd = sd(onebb$ATE_adjusted), bias = mean(onebb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_threeb, R == 1)), ate = mean(onebbb$ATE_adjusted), sd = sd(onebbb$ATE_adjusted), bias = mean(onebbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_threec), ate = mean(onec$ATE_adjusted), sd = sd(onec$ATE_adjusted), bias = mean(onec$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_threec, R == 1)), ate = mean(onecc$ATE_adjusted), sd = sd(onecc$ATE_adjusted), bias = mean(onecc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_threec, R == 1)), ate = mean(oneccc$ATE_adjusted), sd = sd(oneccc$ATE_adjusted), bias = mean(oneccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_threed), ate = mean(oned$ATE_adjusted), sd = sd(oned$ATE_adjusted), bias = mean(oned$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_threed, R == 1)), ate = mean(onedd$ATE_adjusted), sd = sd(onedd$ATE_adjusted), bias = mean(onedd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_threed, R == 1)), ate = mean(oneddd$ATE_adjusted), sd = sd(oneddd$ATE_adjusted), bias = mean(oneddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim3_model_one = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim3_model_one, format = "pipe", caption = "Superlearner model averaged across n = 1000 datasets [Simulation 3 Model One]")
+
+## save file on disk
+write.csv(sim3_model_one, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/superlearner2/superlearner_sim3_model_one.csv", row.names = FALSE)
+```
+
+
+### Model 2
+
+- Adjustment model excludes variable $Z_1$
+$y = \beta_0 + \theta_0 A + \beta_2Z_2 + \beta_3Z_3 + \beta_4 Z_4$
+
+#### Full data analysis
+
+```{r}
+## model two under full data analysis ~ excludes z1 in analysis
+model_twoa <- function(df = NULL, cl = cl){
+  all <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    method = "method.NNLS",
+    cluster = cl)
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = all, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = all, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  twoa = lapply(s3a, model_twoa, cl)
+  twob = lapply(s3b, model_twoa, cl)
+  twoc = lapply(s3c, model_twoa, cl)
+  twod = lapply(s3d, model_twoa, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoa <- twoa %>% map_dfr(data.frame)
+  twob <- twob %>% map_dfr(data.frame)
+  twoc <- twoc %>% map_dfr(data.frame)
+  twod <- twod %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 2 when analysis is restricted to only observed data and predictions proceed similarly and the adjustment model excludes $Z_1$.
+
+```{r}
+# model 2 under simulation setting one where adjustment model excludes z1
+model_twob <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals
+  df <- base::subset(df, R == 1)
+  two <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df[, 1]),
+    X = data.frame(df[, c(2, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = two, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = two, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  twoaa = lapply(s3a, model_twob, cl)
+  twobb = lapply(s3b, model_twob, cl)
+  twocc = lapply(s3c, model_twob, cl)
+  twodd = lapply(s3d, model_twob, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoaa <- twoaa %>% map_dfr(data.frame)
+  twobb <- twobb %>% map_dfr(data.frame)
+  twocc <- twocc %>% map_dfr(data.frame)
+  twodd <- twodd %>% map_dfr(data.frame)
+```
+
+
+#### Observed modified analysis
+
+- Model 2 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations and the adjustment model does not include $X_1$.
+
+```{r}
+## observed modified analysis under model 1
+model_twoc <- function(df = NULL, cl = cl){
+  ## subset to only observed individuals and use to fit all the SuperLearner models
+  df_one <- subset(df, R == 1)
+  three <- SuperLearner::snowSuperLearner(
+    Y = as.numeric(df_one[, 1]),
+    X = data.frame(df_one[, c(2, 4, 5, 6)]),
+    cvControl = list(V = 10), # number of folds for CV.SuperLearner
+    family = gaussian(),
+    SL.library = c("SL.ranger", "SL.lm", "SL.svm", "SL.xgboost"),
+    cluster = cl,
+    method = "method.NNLS")
+  
+  ## set A = 0 and generate predictions for everyone
+  df_A0 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A0$A <- 0
+  pred_A0 <- predict.SuperLearner(object = three, newdata = df_A0, onlySL = TRUE)
+  
+## set A = 1 and generate predictions for everyone
+  df_A1 <- data.frame(df[, c(2, 4, 5, 6)])
+  df_A1$A <- 1
+  pred_A1 <- predict.SuperLearner(object = three, newdata = df_A1, onlySL = TRUE)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$pred - pred_A0$pred)
+## compute the bias
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+registerDoParallel(detectCores()-1)
+cl = makeCluster(parallel::detectCores()-1)
+clusterEvalQ(cl, c(library(tidyverse), library(SuperLearner)))
+parallel::clusterSetRNGStream(cl, 123)
+# get the results under each  simulated data set
+  twoaaa = lapply(s3a, model_twoc, cl)
+  twobbb = lapply(s3b, model_twoc, cl)
+  twoccc = lapply(s3c, model_twoc, cl)
+  twoddd = lapply(s3d, model_twoc, cl)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoaaa <- twoaaa %>% map_dfr(data.frame)
+  twobbb <- twobbb %>% map_dfr(data.frame)
+  twoccc <- twoccc %>% map_dfr(data.frame)
+  twoddd <- twoddd %>% map_dfr(data.frame)
+```
+
+#### Model 2 Results
+
+```{r}
+######################################
+## Simulation Setting Three: Model Two #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_threea), ate = mean(twoa$ATE_adjusted), sd = sd(twoa$ATE_adjusted), bias = mean(twoa$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_threea, R == 1)), ate = mean(twoaa$ATE_adjusted), sd = sd(twoaa$ATE_adjusted), bias = mean(twoaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_threea, R == 1)), ate = mean(twoaaa$ATE_adjusted), sd = sd(twoaaa$ATE_adjusted), bias = mean(twoaaa$bias_adjusted))
+obs_m
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_threeb), ate = mean(twob$ATE_adjusted), sd = sd(twob$ATE_adjusted), bias = mean(twob$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_threeb, R == 1)), ate = mean(twobb$ATE_adjusted), sd = sd(twobb$ATE_adjusted), bias = mean(twobb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_threeb, R == 1)), ate = mean(twobbb$ATE_adjusted), sd = sd(twobbb$ATE_adjusted), bias = mean(twobbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_threec), ate = mean(twoc$ATE_adjusted), sd = sd(twoc$ATE_adjusted), bias = mean(twoc$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_threec, R == 1)), ate = mean(twocc$ATE_adjusted), sd = sd(twocc$ATE_adjusted), bias = mean(twocc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_threec, R == 1)), ate = mean(twoccc$ATE_adjusted), sd = sd(twoccc$ATE_adjusted), bias = mean(twoccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_threed), ate = mean(twod$ATE_adjusted), sd = sd(twod$ATE_adjusted), bias = mean(twod$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_threed, R == 1)), ate = mean(twodd$ATE_adjusted), sd = sd(twodd$ATE_adjusted), bias = mean(twodd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_threed, R == 1)), ate = mean(twoddd$ATE_adjusted), sd = sd(twoddd$ATE_adjusted), bias = mean(twoddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim3_model_two = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim3_model_two, format = "pipe", caption = "BART model averaged across n = 1000 datasets [Simulation 3 Model Two]")
+
+## write simulation 3 model 2 results to table
+write.csv(sim3_model_two, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/superlearner2/superlearner_sim3_model_two.csv", row.names = FALSE)
+```
+

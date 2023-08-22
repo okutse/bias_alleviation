@@ -1,0 +1,1579 @@
+---
+title: "Informative Missing Data"
+subtitle: "Correctly Specified Linear regression Model"
+author: "Amos Okutse"
+date: "  `r format(Sys.time(), '%d %B, %Y')` "
+header-includes:
+- \usepackage{color, colortbl}  % for using table colors
+- \definecolor{Gray}{gray}{0.9}  %define the color to be used
+- \usepackage{multirow}
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{fvextra}
+- \usepackage{float}
+- \usepackage{wrapfig}
+- \usepackage{amsmath}
+- \usepackage{float}
+- \usepackage{graphicx}
+- \usepackage{microtype}
+- \usepackage{setspace}
+- \usepackage[font=singlespacing]{caption} #can change font here for captions here!!
+- \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}}
+#- \onehalfspacing
+fontsize: 10pt
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    #keep_md: true
+link-citation: yes
+colorlinks: yes
+linkcolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  eval = FALSE, 
+	echo = FALSE,
+	cache = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center',
+	fig.pos = 'H',
+	dpi = 350,
+	tidy.opts = list(width.cutoff = 80, tidy = TRUE)
+)
+```
+
+```{r, echo=FALSE, include= FALSE}
+# function to install missing packages
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos='http://cran.rstudio.com/')
+  sapply(pkg, require, character.only = TRUE)
+}
+packages =c( "tidyverse","knitr", "kableExtra","skimr", "MatchIt", "RItools","optmatch", "ggplot2", "tufte", "tufterhandout", "plotly", "snowfall", "rstan", "gridExtra", "knitr", "gtsummary", "data.table", "GGally", "MASS", "broom", "boot", "foreach", "doParallel", "glmnet", "tidymodels" , "usemodels", "magrittr", "modelr")
+ipak(packages)
+```
+
+## Introduction
+
+- This data generation mechanism examines a more informative missing data mechanism and specifically, the role of covariate adjustment when the missing data is not only dependent on the adjustment covariates in a misspecified model but also on the treatment variable, and the effect modification of the treatment effect by a single adjustment covariate. 
+
+- We explore the effect of the omission of the treatment effect modifying covariate on the subsequent treatment effect estimates as well as missing data induced bias when the adjustment covariates are fairly to highly prognostic of the outcome under correct and incorrect model misspecifications. 
+
+- The outcome data generation mechanism is specified as $y = 210 + 50*A + \theta_1 * A*Z_1 + 27.4*Z_1 + 13.7*Z_2 + 13.7*Z_3 + 13.7*Z_4 + e$ whereas the missing data model is $R = \textrm{expit}(-Z_1 + \eta_0*A + \eta_1*A*Z_1 +0.5*Z_2 - 0.25*Z_3 - 0.1*Z_4)$. We generate the actual adjustment covariates under incorrect model specification as $x_1 = exp(Z_1/2),\: x_2 = Z_2/(1+exp(Z_1))+10, \: x_3 = (Z_1Z_3/25 + 0.6)^3,\: x_4 = (Z_2 + Z_4 + 20)^2$ assuming that these are the variables the analyst has access to.
+
+## Simulation settings
+
+- **Simulation setting 1** is a correctly specified model synonymous with the previous analysis scenarios where the adjustment model is linear and the adjustment covariates are the true outcome generating variables specified in the outcome model.
+
+(1) [Model 1] Given $\theta_1 = \eta_0 = \eta_1 = 0$ including $Z_1, \cdots, Z_4$ in adjustment model 1 is not supposed to result in substantial bias (no bias since we are adjusting for the true y generating covariates; also maximum precision when sd = 1 compared to sd = 45)
+
+(2) [Model 2] Dropping $Z_1$ in the adjustment model should result in a model misspecification which will not have a substantial effect given the above conditions do not induce a dependence of the $R$ and $y$ models on $Z_1$
+
+- **Simulation setting 2** has the conditions $\theta_1 = \eta_1 = 0$ whereas $\eta_0 = 1$. This setting induces a dependence of the missing data mechanism on the treatment variable, $A$. 
+
+(1) [Model 1] Including all the Z's in the adjustment model should not result in substantial biases (if any). 
+
+(2) [Model 2] Dropping the $Z$ in the adjustment model should result into some bias (higher bias compared to Model 1 given that adjustment does not consider treatment effect modification by the cvariate $Z_1$)
+
+- **Simulation setting 3** has the conditions $\theta_1 = 0, \: \eta_0 = 1, \: \eta_1 = -1$ alluding to the dependence of the missing data mechanism on the treatment, $A$ and the potential effect modification by variable $Z_1$.
+
+(1) [Model 1] should expect to see limited bias if any since adjustment is for true outcome generating variables.
+
+(2) [Model 2] should expect to see bias higher when residual sd is high since we do not consider the effect modification by $Z_1$ in the adjustment when we drop this variable from the adjustment model. 
+
+- When we adjust for a variable on which the missing data mechanism depends on, we should expect to see some gains in precision and reductions in bias. Gains should be higher when the proportion of variance explained by the adjustment covariates is higher.
+
+## Simulation setting 1
+
+### Model 1:
+
+- Adjustment model is correctly specified
+
+```{r}
+## load the saved data sets for setting 1
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/one.RData")
+```
+
+#### Full data analysis
+
+- Model 1 when the analysis is for everyone in the data set.
+
+```{r}
+## model one under full data analysis ~ linear regression function with correct specification of adjustment covariates
+model_onea <- function(df){
+  # fit linear model for all individuals
+  lm_all <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z1 + z2 + z3 + z4, data = df)
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_all, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_all, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each dataset in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  onea = parLapply(cl, s1a, model_onea)
+  oneb = parLapply(cl, s1b, model_onea)
+  onec = parLapply(cl, s1c, model_onea)
+  oned = parLapply(cl, s1d, model_onea)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 1 when analysis is restricted to only observed data and predictions proceed similarly.
+
+```{r}
+## model one under full data analysis ~ linear regression function with correct specification of adjustment covariates
+
+## function is called lm_oneb because it refers to linear regression model under setting 1 part b where b refers to the type of analysis (observed).
+model_oneb <- function(df){
+  df <- base::subset(df, R == 1)
+  # fit linear model for individuals with R == 1 and make predictions for the subset
+  lm_b <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z1 + z2 + z3 + z4, data = df)
+## set A = 0 and generate predictions for R == 1
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_b, df_A0)
+## set A = 1 and generate predictions for R == 1
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_b, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  oneaa = parLapply(cl, s1a, model_oneb)
+  onebb = parLapply(cl, s1b, model_oneb)
+  onecc = parLapply(cl, s1c, model_oneb)
+  onedd = parLapply(cl, s1d, model_oneb)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaa <- oneaa %>% map_dfr(data.frame)
+  onebb <- onebb %>% map_dfr(data.frame)
+  onecc <- onecc %>% map_dfr(data.frame)
+  onedd <- onedd %>% map_dfr(data.frame)
+```
+
+
+
+#### Observed modified data analysis
+
+- Model 1 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations.
+
+```{r}
+## observed modified analysis under model 1
+model_onec <- function(df){
+  
+  ## fit model for individuals with R == 1 and make predictions for everyone
+  lm_c <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z1 + z2 + z3 + z4, data = base::subset(df, R == 1))
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_c, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_c, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  oneaaa = parLapply(cl, s1a, model_onec)
+  onebbb = parLapply(cl, s1b, model_onec)
+  oneccc = parLapply(cl, s1c, model_onec)
+  oneddd = parLapply(cl, s1d, model_onec)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaaa <- oneaaa %>% map_dfr(data.frame)
+  onebbb <- onebbb %>% map_dfr(data.frame)
+  oneccc <- oneccc %>% map_dfr(data.frame)
+  oneddd <- oneddd %>% map_dfr(data.frame)
+```
+
+
+#### Model 1 Results
+
+```{r}
+######################################
+## Simulation Setting One: Model One #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_onea), ate = mean(onea$ATE_adjusted), sd = sd(onea$ATE_adjusted), bias = mean(onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_onea, R == 1)), ate = mean(oneaa$ATE_adjusted), sd = sd(oneaa$ATE_adjusted), bias = mean(oneaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_onea, R == 1)), ate = mean(oneaaa$ATE_adjusted), sd = sd(oneaaa$ATE_adjusted), bias = mean(oneaaa$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_oneb), ate = mean(oneb$ATE_adjusted), sd = sd(oneb$ATE_adjusted), bias = mean(oneb$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_oneb, R == 1)), ate = mean(onebb$ATE_adjusted), sd = sd(onebb$ATE_adjusted), bias = mean(onebb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_oneb, R == 1)), ate = mean(onebbb$ATE_adjusted), sd = sd(onebbb$ATE_adjusted), bias = mean(onebbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_onec), ate = mean(onec$ATE_adjusted), sd = sd(onec$ATE_adjusted), bias = mean(onec$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_onec, R == 1)), ate = mean(onecc$ATE_adjusted), sd = sd(onecc$ATE_adjusted), bias = mean(onecc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_onec, R == 1)), ate = mean(oneccc$ATE_adjusted), sd = sd(oneccc$ATE_adjusted), bias = mean(oneccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_oned), ate = mean(oned$ATE_adjusted), sd = sd(oned$ATE_adjusted), bias = mean(oned$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_oned, R == 1)), ate = mean(onedd$ATE_adjusted), sd = sd(onedd$ATE_adjusted), bias = mean(onedd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_oned, R == 1)), ate = mean(oneddd$ATE_adjusted), sd = sd(oneddd$ATE_adjusted), bias = mean(oneddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim1_model_one = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim1_model_one, format = "pipe", caption = "Linear regression model results using the true outcome model averaged across n = 1000 datasets [Model One]")
+
+## save file on disk
+write.csv(sim1_model_one, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/sim1_model_one.csv", row.names = FALSE)
+```
+
+
+
+
+### Model 2:
+
+- Adjustment model excludes variable $Z_1$
+
+#### Full data analysis
+
+```{r}
+## model two under full data analysis ~ linear regression function with incorrect specification of adjustment covariates [excludes z1]
+model_twoa <- function(df){
+  # fit linear model for all individuals
+  lm_all <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z2 + z3 + z4, data = df) #adjustment model has no z1 here!!
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_all, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_all, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  twoa = parLapply(cl, s1a, model_twoa)
+  twob = parLapply(cl, s1b, model_twoa)
+  twoc = parLapply(cl, s1c, model_twoa)
+  twod = parLapply(cl, s1d, model_twoa)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoa <- twoa %>% map_dfr(data.frame)
+  twob <- twob %>% map_dfr(data.frame)
+  twoc <- twoc %>% map_dfr(data.frame)
+  twod <- twod %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 2 when analysis is restricted to only observed data and predictions proceed similarly and the adjustment model excludes $Z_1$.
+
+```{r}
+# model 2 under simulation setting one where adjustment model excludes z1
+model_twob <- function(df){
+  
+  df <- base::subset(df, R == 1)
+  # fit linear model for individuals with R == 1 and make predictions for the same subset
+  lm_b <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z2 + z3 + z4, data = df)
+## set A = 0 and generate predictions for R == 1
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_b, df_A0)
+## set A = 1 and generate predictions for R == 1
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_b, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  twoaa = parLapply(cl, s1a, model_twob)
+  twobb = parLapply(cl, s1b, model_twob)
+  twocc = parLapply(cl, s1c, model_twob)
+  twodd = parLapply(cl, s1d, model_twob)
+stopCluster(cl)
+```
+
+```{r}
+## convert the estimates to a data frame
+  twoaa <- twoaa %>% map_dfr(data.frame)
+  twobb <- twobb %>% map_dfr(data.frame)
+  twocc <- twocc %>% map_dfr(data.frame)
+  twodd <- twodd %>% map_dfr(data.frame)
+```
+
+
+#### Observed modified analysis
+
+- Model 2 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations and the adjustment model does not include $Z_1$.
+
+```{r}
+## observed modified analysis under model 1
+model_twoc <- function(df){
+  
+  ## fit model for individuals with R == 1 and make predictions for everyone
+  lm_c <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z2 + z3 + z4, data = base::subset(df, R == 1))
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_c, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_c, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  twoaaa = parLapply(cl, s1a, model_twoc)
+  twobbb = parLapply(cl, s1b, model_twoc)
+  twoccc = parLapply(cl, s1c, model_twoc)
+  twoddd = parLapply(cl, s1d, model_twoc)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoaaa <- twoaaa %>% map_dfr(data.frame)
+  twobbb <- twobbb %>% map_dfr(data.frame)
+  twoccc <- twoccc %>% map_dfr(data.frame)
+  twoddd <- twoddd %>% map_dfr(data.frame)
+```
+
+#### Model 2 Results
+
+```{r}
+######################################
+## Simulation Setting One: Model Two #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_onea), ate = mean(twoa$ATE_adjusted), sd = sd(twoa$ATE_adjusted), bias = mean(twoa$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_onea, R == 1)), ate = mean(twoaa$ATE_adjusted), sd = sd(twoaa$ATE_adjusted), bias = mean(twoaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_onea, R == 1)), ate = mean(twoaaa$ATE_adjusted), sd = sd(twoaaa$ATE_adjusted), bias = mean(twoaaa$bias_adjusted))
+obs_m
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_oneb), ate = mean(twob$ATE_adjusted), sd = sd(twob$ATE_adjusted), bias = mean(twob$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_oneb, R == 1)), ate = mean(twobb$ATE_adjusted), sd = sd(twobb$ATE_adjusted), bias = mean(twobb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_oneb, R == 1)), ate = mean(twobbb$ATE_adjusted), sd = sd(twobbb$ATE_adjusted), bias = mean(twobbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_onec), ate = mean(twoc$ATE_adjusted), sd = sd(twoc$ATE_adjusted), bias = mean(twoc$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_onec, R == 1)), ate = mean(twocc$ATE_adjusted), sd = sd(twocc$ATE_adjusted), bias = mean(twocc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_onec, R == 1)), ate = mean(twoccc$ATE_adjusted), sd = sd(twoccc$ATE_adjusted), bias = mean(twoccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_oned), ate = mean(twod$ATE_adjusted), sd = sd(twod$ATE_adjusted), bias = mean(twod$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_oned, R == 1)), ate = mean(twodd$ATE_adjusted), sd = sd(twodd$ATE_adjusted), bias = mean(twodd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_oned, R == 1)), ate = mean(twoddd$ATE_adjusted), sd = sd(twoddd$ATE_adjusted), bias = mean(twoddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim1_model_two = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim1_model_two, format = "pipe", caption = "Linear regression model results using the true outcome model averaged across n = 1000 datasets [Simulation 1 Model Two]")
+
+## write simulation 1 model 2 results to table
+write.csv(sim1_model_two, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/sim1_model_two.csv", row.names = FALSE)
+```
+
+
+
+
+## Simulation setting 2
+
+```{r}
+## clear the work space and load the data for the second simulation setting
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/two.RData")
+```
+
+### Model 1
+
+- the adjustment model is correctly specified
+
+- TO DO
+
+-write out resulting model here!!
+
+#### Full data analysis
+
+- Model 1 when the analysis is for everyone in the data set.
+
+```{r}
+## model one under full data analysis ~ linear regression function with correct specification of adjustment covariates
+model_onea <- function(df){
+  # fit linear model for all individuals
+  lm_all <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z1 + z2 + z3 + z4, data = df)
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_all, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_all, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each dataset in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  onea = parLapply(cl, s2a, model_onea)
+  oneb = parLapply(cl, s2b, model_onea)
+  onec = parLapply(cl, s2c, model_onea)
+  oned = parLapply(cl, s2d, model_onea)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 1 when analysis is restricted to only observed data and predictions proceed similarly.
+
+```{r}
+## model one under full data analysis ~ linear regression function with correct specification of adjustment covariates
+
+## function is called lm_oneb because it refers to linear regression model under setting 1 part b where b refers to the type of analysis (observed).
+model_oneb <- function(df){
+  df <- base::subset(df, R == 1)
+  # fit linear model for individuals with R == 1 and make predictions for the subset
+  lm_b <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z1 + z2 + z3 + z4, data = df)
+## set A = 0 and generate predictions for R == 1
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_b, df_A0)
+## set A = 1 and generate predictions for R == 1
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_b, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  oneaa = parLapply(cl, s2a, model_oneb)
+  onebb = parLapply(cl, s2b, model_oneb)
+  onecc = parLapply(cl, s2c, model_oneb)
+  onedd = parLapply(cl, s2d, model_oneb)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaa <- oneaa %>% map_dfr(data.frame)
+  onebb <- onebb %>% map_dfr(data.frame)
+  onecc <- onecc %>% map_dfr(data.frame)
+  onedd <- onedd %>% map_dfr(data.frame)
+```
+
+
+
+#### Observed modified data analysis
+
+- Model 1 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations.
+
+```{r}
+## observed modified analysis under model 1
+model_onec <- function(df){
+  
+  ## fit model for individuals with R == 1 and make predictions for everyone
+  lm_c <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z1 + z2 + z3 + z4, data = base::subset(df, R == 1))
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_c, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_c, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  oneaaa = parLapply(cl, s2a, model_onec)
+  onebbb = parLapply(cl, s2b, model_onec)
+  oneccc = parLapply(cl, s2c, model_onec)
+  oneddd = parLapply(cl, s2d, model_onec)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaaa <- oneaaa %>% map_dfr(data.frame)
+  onebbb <- onebbb %>% map_dfr(data.frame)
+  oneccc <- oneccc %>% map_dfr(data.frame)
+  oneddd <- oneddd %>% map_dfr(data.frame)
+```
+
+
+#### Model 1 Results
+
+```{r}
+######################################
+## Simulation Setting Two: Model one #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_twoa), ate = mean(onea$ATE_adjusted), sd = sd(onea$ATE_adjusted), bias = mean(onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_twoa, R == 1)), ate = mean(oneaa$ATE_adjusted), sd = sd(oneaa$ATE_adjusted), bias = mean(oneaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_twoa, R == 1)), ate = mean(oneaaa$ATE_adjusted), sd = sd(oneaaa$ATE_adjusted), bias = mean(oneaaa$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_twob), ate = mean(oneb$ATE_adjusted), sd = sd(oneb$ATE_adjusted), bias = mean(oneb$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_twob, R == 1)), ate = mean(onebb$ATE_adjusted), sd = sd(onebb$ATE_adjusted), bias = mean(onebb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_twob, R == 1)), ate = mean(onebbb$ATE_adjusted), sd = sd(onebbb$ATE_adjusted), bias = mean(onebbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_twoc), ate = mean(onec$ATE_adjusted), sd = sd(onec$ATE_adjusted), bias = mean(onec$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_twoc, R == 1)), ate = mean(onecc$ATE_adjusted), sd = sd(onecc$ATE_adjusted), bias = mean(onecc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_twoc, R == 1)), ate = mean(oneccc$ATE_adjusted), sd = sd(oneccc$ATE_adjusted), bias = mean(oneccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_twod), ate = mean(oned$ATE_adjusted), sd = sd(oned$ATE_adjusted), bias = mean(oned$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_twod, R == 1)), ate = mean(onedd$ATE_adjusted), sd = sd(onedd$ATE_adjusted), bias = mean(onedd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_twod, R == 1)), ate = mean(oneddd$ATE_adjusted), sd = sd(oneddd$ATE_adjusted), bias = mean(oneddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim2_model_one = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim2_model_one, format = "pipe", caption = "Linear regression model results using the true outcome model averaged across n = 1000 datasets [Simulation 2 Model one]")
+
+## save file on disk
+write.csv(sim2_model_one, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/sim2_model_one.csv", row.names = FALSE)
+```
+
+
+
+### Model 2
+
+
+#### Full data analysis
+
+```{r}
+## model two under full data analysis ~ linear regression function with incorrect specification of adjustment covariates [excludes z1]
+model_twoa <- function(df){
+  # fit linear model for all individuals
+  lm_all <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z2 + z3 + z4, data = df) #adjustment model has no z1 here!!
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_all, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_all, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  twoa = parLapply(cl, s2a, model_twoa)
+  twob = parLapply(cl, s2b, model_twoa)
+  twoc = parLapply(cl, s2c, model_twoa)
+  twod = parLapply(cl, s2d, model_twoa)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoa <- twoa %>% map_dfr(data.frame)
+  twob <- twob %>% map_dfr(data.frame)
+  twoc <- twoc %>% map_dfr(data.frame)
+  twod <- twod %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 2 when analysis is restricted to only observed data and predictions proceed similarly and the adjustment model excludes $Z_1$.
+
+```{r}
+# model 2 under simulation setting one where adjustment model excludes z1
+model_twob <- function(df){
+  
+  df <- base::subset(df, R == 1)
+  # fit linear model for individuals with R == 1 and make predictions for the same subset
+  lm_b <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z2 + z3 + z4, data = df)
+## set A = 0 and generate predictions for R == 1
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_b, df_A0)
+## set A = 1 and generate predictions for R == 1
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_b, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  twoaa = parLapply(cl, s2a, model_twob)
+  twobb = parLapply(cl, s2b, model_twob)
+  twocc = parLapply(cl, s2c, model_twob)
+  twodd = parLapply(cl, s2d, model_twob)
+stopCluster(cl)
+```
+
+```{r}
+## convert the estimates to a data frame
+  twoaa <- twoaa %>% map_dfr(data.frame)
+  twobb <- twobb %>% map_dfr(data.frame)
+  twocc <- twocc %>% map_dfr(data.frame)
+  twodd <- twodd %>% map_dfr(data.frame)
+```
+
+
+#### Observed modified analysis
+
+- Model 2 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations and the adjustment model does not include $Z_1$.
+
+```{r}
+## observed modified analysis under model 1
+model_twoc <- function(df){
+  
+  ## fit model for individuals with R == 1 and make predictions for everyone
+  lm_c <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z2 + z3 + z4, data = base::subset(df, R == 1))
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_c, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_c, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  twoaaa = parLapply(cl, s2a, model_twoc)
+  twobbb = parLapply(cl, s2b, model_twoc)
+  twoccc = parLapply(cl, s2c, model_twoc)
+  twoddd = parLapply(cl, s2d, model_twoc)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoaaa <- twoaaa %>% map_dfr(data.frame)
+  twobbb <- twobbb %>% map_dfr(data.frame)
+  twoccc <- twoccc %>% map_dfr(data.frame)
+  twoddd <- twoddd %>% map_dfr(data.frame)
+```
+
+#### Model 2 Results
+
+```{r}
+######################################
+## Simulation Setting Two: Model Two #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_twoa), ate = mean(twoa$ATE_adjusted), sd = sd(twoa$ATE_adjusted), bias = mean(twoa$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_twoa, R == 1)), ate = mean(twoaa$ATE_adjusted), sd = sd(twoaa$ATE_adjusted), bias = mean(twoaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_twoa, R == 1)), ate = mean(twoaaa$ATE_adjusted), sd = sd(twoaaa$ATE_adjusted), bias = mean(twoaaa$bias_adjusted))
+obs_m
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_twob), ate = mean(twob$ATE_adjusted), sd = sd(twob$ATE_adjusted), bias = mean(twob$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_twob, R == 1)), ate = mean(twobb$ATE_adjusted), sd = sd(twobb$ATE_adjusted), bias = mean(twobb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_twob, R == 1)), ate = mean(twobbb$ATE_adjusted), sd = sd(twobbb$ATE_adjusted), bias = mean(twobbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_twoc), ate = mean(twoc$ATE_adjusted), sd = sd(twoc$ATE_adjusted), bias = mean(twoc$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_twoc, R == 1)), ate = mean(twocc$ATE_adjusted), sd = sd(twocc$ATE_adjusted), bias = mean(twocc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_twoc, R == 1)), ate = mean(twoccc$ATE_adjusted), sd = sd(twoccc$ATE_adjusted), bias = mean(twoccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_twod), ate = mean(twod$ATE_adjusted), sd = sd(twod$ATE_adjusted), bias = mean(twod$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_twod, R == 1)), ate = mean(twodd$ATE_adjusted), sd = sd(twodd$ATE_adjusted), bias = mean(twodd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_twod, R == 1)), ate = mean(twoddd$ATE_adjusted), sd = sd(twoddd$ATE_adjusted), bias = mean(twoddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim2_model_two = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim2_model_two, format = "pipe", caption = "Linear regression model results using the true outcome model averaged across n = 1000 datasets [Simulation 2 Model Two]")
+
+
+## save simulation 2 model two results file on disk
+write.csv(sim2_model_two, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/sim2_model_two.csv", row.names = FALSE)
+```
+
+
+
+
+## Simulation setting 3
+
+```{r}
+## clean up the workspace for simulation setting three
+rm(list = ls())
+load("/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/three.RData")
+```
+
+### Model 1
+
+#### Full data analysis
+
+- Model 1 when the analysis is for everyone in the data set.
+
+```{r}
+## model one under full data analysis ~ linear regression function with correct specification of adjustment covariates
+model_onea <- function(df){
+  # fit linear model for all individuals
+  lm_all <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z1 + z2 + z3 + z4, data = df)
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_all, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_all, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  onea = parLapply(cl, s3a, model_onea)
+  oneb = parLapply(cl, s3b, model_onea)
+  onec = parLapply(cl, s3c, model_onea)
+  oned = parLapply(cl, s3d, model_onea)
+stopCluster(cl)
+```
+
+```{r}
+## convert the estimates to a data frame
+  onea <- onea %>% map_dfr(data.frame)
+  oneb <- oneb %>% map_dfr(data.frame)
+  onec <- onec %>% map_dfr(data.frame)
+  oned <- oned %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 1 when analysis is restricted to only observed data and predictions proceed similarly.
+
+```{r}
+## model one under full data analysis ~ linear regression function with correct specification of adjustment covariates
+
+## function is called lm_oneb because it refers to linear regression model under setting 1 part b where b refers to the type of analysis (observed).
+model_oneb <- function(df){
+  df <- base::subset(df, R == 1)
+  # fit linear model for individuals with R == 1 and make predictions for the subset
+  lm_b <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z1 + z2 + z3 + z4, data = df)
+## set A = 0 and generate predictions for R == 1
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_b, df_A0)
+## set A = 1 and generate predictions for R == 1
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_b, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  oneaa = parLapply(cl, s3a, model_oneb)
+  onebb = parLapply(cl, s3b, model_oneb)
+  onecc = parLapply(cl, s3c, model_oneb)
+  onedd = parLapply(cl, s3d, model_oneb)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaa <- oneaa %>% map_dfr(data.frame)
+  onebb <- onebb %>% map_dfr(data.frame)
+  onecc <- onecc %>% map_dfr(data.frame)
+  onedd <- onedd %>% map_dfr(data.frame)
+```
+
+
+
+#### Observed modified data analysis
+
+- Model 1 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations.
+
+```{r}
+## observed modified analysis under model 1
+model_onec <- function(df){
+  
+  ## fit model for individuals with R == 1 and make predictions for everyone
+  lm_c <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z1 + z2 + z3 + z4, data = base::subset(df, R == 1))
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_c, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_c, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  oneaaa = parLapply(cl, s3a, model_onec)
+  onebbb = parLapply(cl, s3b, model_onec)
+  oneccc = parLapply(cl, s3c, model_onec)
+  oneddd = parLapply(cl, s3d, model_onec)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  oneaaa <- oneaaa %>% map_dfr(data.frame)
+  onebbb <- onebbb %>% map_dfr(data.frame)
+  oneccc <- oneccc %>% map_dfr(data.frame)
+  oneddd <- oneddd %>% map_dfr(data.frame)
+```
+
+
+#### Model 1 Results
+
+```{r}
+######################################
+## Simulation Setting Three: Model One #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_threea), ate = mean(onea$ATE_adjusted), sd = sd(onea$ATE_adjusted), bias = mean(onea$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_threea, R == 1)), ate = mean(oneaa$ATE_adjusted), sd = sd(oneaa$ATE_adjusted), bias = mean(oneaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_threea, R == 1)), ate = mean(oneaaa$ATE_adjusted), sd = sd(oneaaa$ATE_adjusted), bias = mean(oneaaa$bias_adjusted))
+obs_m
+
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_threeb), ate = mean(oneb$ATE_adjusted), sd = sd(oneb$ATE_adjusted), bias = mean(oneb$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_threeb, R == 1)), ate = mean(onebb$ATE_adjusted), sd = sd(onebb$ATE_adjusted), bias = mean(onebb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_threeb, R == 1)), ate = mean(onebbb$ATE_adjusted), sd = sd(onebbb$ATE_adjusted), bias = mean(onebbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_threec), ate = mean(onec$ATE_adjusted), sd = sd(onec$ATE_adjusted), bias = mean(onec$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_threec, R == 1)), ate = mean(onecc$ATE_adjusted), sd = sd(onecc$ATE_adjusted), bias = mean(onecc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_threec, R == 1)), ate = mean(oneccc$ATE_adjusted), sd = sd(oneccc$ATE_adjusted), bias = mean(oneccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_threed), ate = mean(oned$ATE_adjusted), sd = sd(oned$ATE_adjusted), bias = mean(oned$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_threed, R == 1)), ate = mean(onedd$ATE_adjusted), sd = sd(onedd$ATE_adjusted), bias = mean(onedd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_threed, R == 1)), ate = mean(oneddd$ATE_adjusted), sd = sd(oneddd$ATE_adjusted), bias = mean(oneddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim3_model_one = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim3_model_one, format = "pipe", caption = "Linear regression model results using the true outcome model averaged across n = 1000 datasets [Simulation 3 Model One]")
+
+## save file on disk
+write.csv(sim3_model_one, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/sim3_model_one.csv", row.names = FALSE)
+```
+
+
+### Model 2
+
+- Adjustment model excludes variable $Z_1$
+
+#### Full data analysis
+
+```{r}
+## model two under full data analysis ~ linear regression function with incorrect specification of adjustment covariates [excludes z1]
+model_twoa <- function(df){
+  # fit linear model for all individuals
+  lm_all <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z2 + z3 + z4, data = df) #adjustment model has no z1 here!!
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_all, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_all, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  twoa = parLapply(cl, s3a, model_twoa)
+  twob = parLapply(cl, s3b, model_twoa)
+  twoc = parLapply(cl, s3c, model_twoa)
+  twod = parLapply(cl, s3d, model_twoa)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoa <- twoa %>% map_dfr(data.frame)
+  twob <- twob %>% map_dfr(data.frame)
+  twoc <- twoc %>% map_dfr(data.frame)
+  twod <- twod %>% map_dfr(data.frame)
+```
+
+#### Observed data analysis
+
+- Model 2 when analysis is restricted to only observed data and predictions proceed similarly and the adjustment model excludes $Z_1$.
+
+```{r}
+# model 2 under simulation setting one where adjustment model excludes z1
+model_twob <- function(df){
+  
+  df <- base::subset(df, R == 1)
+  # fit linear model for individuals with R == 1 and make predictions for the same subset
+  lm_b <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z2 + z3 + z4, data = df)
+## set A = 0 and generate predictions for R == 1
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_b, df_A0)
+## set A = 1 and generate predictions for R == 1
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_b, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  twoaa = parLapply(cl, s3a, model_twob)
+  twobb = parLapply(cl, s3b, model_twob)
+  twocc = parLapply(cl, s3c, model_twob)
+  twodd = parLapply(cl, s3d, model_twob)
+stopCluster(cl)
+```
+
+```{r}
+## convert the estimates to a data frame
+  twoaa <- twoaa %>% map_dfr(data.frame)
+  twobb <- twobb %>% map_dfr(data.frame)
+  twocc <- twocc %>% map_dfr(data.frame)
+  twodd <- twodd %>% map_dfr(data.frame)
+```
+
+
+#### Observed modified analysis
+
+- Model 2 when the analysis is based on only treated observations and the resulting model extended to all observations in the data set including the untreated observations and the adjustment model does not include $Z_1$.
+
+```{r}
+## observed modified analysis under model 1
+model_twoc <- function(df){
+  
+  ## fit model for individuals with R == 1 and make predictions for everyone
+  lm_c <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm") %>% 
+  fit(formula = y ~ A + z2 + z3 + z4, data = base::subset(df, R == 1))
+## set A = 0 and generate predictions for everyone
+  df_A0 <- df
+  df_A0$A <- 0
+  pred_A0 <- predict(lm_c, df_A0)
+## set A = 1 and generate predictions for everyone
+  df_A1 <- df
+  df_A1$A <- 1
+  pred_A1 <- predict(lm_c, df_A1)
+## compute the ATE
+  ATE_adjusted = mean(pred_A1$.pred - pred_A0$.pred)
+## compute the biases in absolute values
+  bias_adjusted = ATE_adjusted - 50
+## return the results as a data frame
+  rslt = data.frame("ATE_adjusted" = ATE_adjusted, "bias_adjusted" = bias_adjusted)
+  return(rslt)
+}
+```
+
+
+```{r}
+## apply the function under model one to each data set in the list
+cores <- detectCores()-1
+registerDoParallel(cores)
+cl = makeCluster(cores)
+pkgs = clusterEvalQ(cl, c(library(tidyverse), library(tidymodels), library(magrittr), set.seed(123)))
+# get the results under each  simulated data set
+  twoaaa = parLapply(cl, s3a, model_twoc)
+  twobbb = parLapply(cl, s3b, model_twoc)
+  twoccc = parLapply(cl, s3c, model_twoc)
+  twoddd = parLapply(cl, s3d, model_twoc)
+stopCluster(cl)
+```
+
+
+```{r}
+## convert the estimates to a data frame
+  twoaaa <- twoaaa %>% map_dfr(data.frame)
+  twobbb <- twobbb %>% map_dfr(data.frame)
+  twoccc <- twoccc %>% map_dfr(data.frame)
+  twoddd <- twoddd %>% map_dfr(data.frame)
+```
+
+#### Model 2 Results
+
+```{r}
+######################################
+## Simulation Setting Three: Model Two #
+######################################
+
+##------------------------------------------------------------------------------
+## case 1 [n = 500, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full <- c(n = nrow(s_threea), ate = mean(twoa$ATE_adjusted), sd = sd(twoa$ATE_adjusted), bias = mean(twoa$bias_adjusted))
+full
+## observed
+obs <- c(n = nrow(subset(s_threea, R == 1)), ate = mean(twoaa$ATE_adjusted), sd = sd(twoaa$ATE_adjusted), bias = mean(twoaa$bias_adjusted))
+obs
+## observed modified
+obs_m <- c(n = nrow(subset(s_threea, R == 1)), ate = mean(twoaaa$ATE_adjusted), sd = sd(twoaaa$ATE_adjusted), bias = mean(twoaaa$bias_adjusted))
+obs_m
+
+##------------------------------------------------------------------------------
+## case 2 [n = 500, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full2 <- c(n = nrow(s_threeb), ate = mean(twob$ATE_adjusted), sd = sd(twob$ATE_adjusted), bias = mean(twob$bias_adjusted))
+full2
+## observed
+obs_2 <- c(n = nrow(subset(s_threeb, R == 1)), ate = mean(twobb$ATE_adjusted), sd = sd(twobb$ATE_adjusted), bias = mean(twobb$bias_adjusted))
+obs_2
+## observed modified
+obs_m2 <- c(n = nrow(subset(s_threeb, R == 1)), ate = mean(twobbb$ATE_adjusted), sd = sd(twobbb$ATE_adjusted), bias = mean(twobbb$bias_adjusted))
+obs_m2
+
+##------------------------------------------------------------------------------
+## case 3 [n = 2000, SD = 1]
+##------------------------------------------------------------------------------
+## full
+full3 <- c(n = nrow(s_threec), ate = mean(twoc$ATE_adjusted), sd = sd(twoc$ATE_adjusted), bias = mean(twoc$bias_adjusted))
+full3
+## observed
+obs_3 <- c(n = nrow(subset(s_threec, R == 1)), ate = mean(twocc$ATE_adjusted), sd = sd(twocc$ATE_adjusted), bias = mean(twocc$bias_adjusted))
+obs_3
+## observed modified
+obs_m3 <- c(n = nrow(subset(s_threec, R == 1)), ate = mean(twoccc$ATE_adjusted), sd = sd(twoccc$ATE_adjusted), bias = mean(twoccc$bias_adjusted))
+obs_m3
+
+##------------------------------------------------------------------------------
+## case 4 [n = 2000, SD = 45]
+##------------------------------------------------------------------------------
+## full
+full4 <- c(n = nrow(s_threed), ate = mean(twod$ATE_adjusted), sd = sd(twod$ATE_adjusted), bias = mean(twod$bias_adjusted))
+full4
+## observed
+obs_4 <- c(n = nrow(subset(s_threed, R == 1)), ate = mean(twodd$ATE_adjusted), sd = sd(twodd$ATE_adjusted), bias = mean(twodd$bias_adjusted))
+obs_4
+## observed modified
+obs_m4 <- c(n = nrow(subset(s_threed, R == 1)), ate = mean(twoddd$ATE_adjusted), sd = sd(twoddd$ATE_adjusted), bias = mean(twoddd$bias_adjusted))
+obs_m4
+
+## write results to table
+sim3_model_two = bind_rows(list("n = 500, SD = 1" = full, "n = 500, SD = 1" = obs, "n = 500, SD = 1"= obs_m, 
+                                   "n = 500, SD = 45" = full2, "n = 500, SD = 45" = obs_2, "n = 500, SD = 45" = obs_m2, 
+                                   "n = 2000, SD = 1" = full3, "n = 2000, SD = 1" = obs_3, "n = 2000, SD = 1" = obs_m3, 
+                                   "n = 2000, SD = 45" = full4, "n = 2000, SD = 45"=  obs_4, "n = 2000, SD = 45" = obs_m4),
+                              .id = "Data generating values") 
+
+kable(sim3_model_two, format = "pipe", caption = "Linear regression model results using the true outcome model averaged across n = 1000 datasets [Simulation 3 Model Two]")
+
+## write simulation 3 model 2 results to table
+write.csv(sim3_model_two, file = "/Users/aokutse/Library/CloudStorage/GoogleDrive-amos_okutse@brown.edu/Shared drives/amos/ThesisResults/data/dgp2/sim3_model_two.csv", row.names = FALSE)
+```
+
